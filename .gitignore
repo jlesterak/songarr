@@ -1,0 +1,30 @@
+# Node modules
+node_modules/
+
+# Local static binaries downloaded during setup
+bin/
+
+# Temp files used during download/conversion
+temp/
+
+# SQLite / JSON Local Database
+data/
+
+# Music library download folder (default)
+music/
+
+# Production build outputs
+dist/
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
