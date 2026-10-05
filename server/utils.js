@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { promisify } from 'util';
+import crypto from 'crypto';
 import nodeID3 from 'node-id3';
 import { binary, TEMP_DIR } from './config.js';
 
@@ -176,12 +177,15 @@ export async function searchYouTube(query, limit = 5) {
   try {
     const args = [
       `ytsearch${limit}:${query}`,
+      // Flat: search metadata only. Full --dump-json lists every format URL,
+      // ~200 KB per video, which overflowed execFile's buffer.
+      '--flat-playlist',
       '--dump-json',
       ...ytdlpCommonArgs(),
       '--no-playlist'
     ];
     
-    const { stdout } = await execFileAsync(YTDLP_PATH, args);
+    const { stdout } = await execFileAsync(YTDLP_PATH, args, { maxBuffer: 16 * 1024 * 1024 });
     const lines = stdout.trim().split('\n').filter(Boolean);
     
     return lines.map(line => {
@@ -190,7 +194,7 @@ export async function searchYouTube(query, limit = 5) {
         return {
           id: json.id,
           title: json.title,
-          url: json.webpage_url,
+          url: json.webpage_url || json.url,
           duration: json.duration, // seconds
           viewCount: json.view_count || 0,
           channel: json.channel || json.uploader || ''
@@ -432,6 +436,73 @@ class ClientSession {
   }
 }
 
+// End offset of the bencoded value starting at i (throws on malformed input).
+function bencodeEnd(buf, i) {
+  const c = buf[i];
+  if (c === 0x69) { // i<int>e
+    const e = buf.indexOf(0x65, i);
+    if (e < 0) throw new Error('bad int');
+    return e + 1;
+  }
+  if (c === 0x6c || c === 0x64) { // list / dict
+    i++;
+    while (buf[i] !== 0x65) {
+      if (i >= buf.length) throw new Error('unterminated');
+      i = bencodeEnd(buf, i);
+    }
+    return i + 1;
+  }
+  const colon = buf.indexOf(0x3a, i); // <len>:<bytes>
+  const len = Number(buf.subarray(i, colon).toString());
+  if (colon < 0 || !Number.isInteger(len) || len < 0) throw new Error('bad string');
+  return colon + 1 + len;
+}
+
+// Info hash of a .torrent file: SHA-1 of the raw bencoded "info" dict.
+export function torrentInfoHash(buf) {
+  try {
+    if (buf[0] !== 0x64) return '';
+    let i = 1;
+    while (i < buf.length && buf[i] !== 0x65) {
+      const keyEnd = bencodeEnd(buf, i);
+      const key = buf.subarray(buf.indexOf(0x3a, i) + 1, keyEnd).toString();
+      const valEnd = bencodeEnd(buf, keyEnd);
+      if (key === 'info') return crypto.createHash('sha1').update(buf.subarray(keyEnd, valEnd)).digest('hex');
+      i = valEnd;
+    }
+  } catch {
+    // malformed: let the tag lookup find the torrent instead
+  }
+  return '';
+}
+
+// Indexer download links point at Prowlarr/Jackett, which the client often
+// can't reach (e.g. qBittorrent in a VPN container with its own DNS). Like the
+// *arrs, fetch the .torrent here and hand the client the file itself; links
+// that redirect to (or return) a magnet are passed on as magnets.
+export async function fetchTorrent(downloadUrl) {
+  let url = downloadUrl;
+  for (let hop = 0; hop < 5; hop++) {
+    if (/^magnet:/i.test(url)) return { magnet: url, infoHash: infoHashFromMagnet(url) };
+    const res = await fetch(url, { redirect: 'manual' });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) throw new Error(`Redirect without a location from the indexer (HTTP ${res.status})`);
+      url = new URL(location, url).href;
+      continue;
+    }
+    if (!res.ok) throw new Error(`Torrent download from the indexer failed: HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.subarray(0, 7).toString() === 'magnet:') {
+      const magnet = buf.toString().trim();
+      return { magnet, infoHash: infoHashFromMagnet(magnet) };
+    }
+    if (buf[0] !== 0x64) throw new Error('The indexer returned something that is not a .torrent file');
+    return { torrent: buf, infoHash: torrentInfoHash(buf) };
+  }
+  throw new Error('Too many redirects fetching the torrent');
+}
+
 // 40-hex btih from a magnet link; base32 hashes are left to the tag lookup.
 export function infoHashFromMagnet(url) {
   const m = /^magnet:.*[?&]xt=urn:btih:([0-9a-f]{40})(?:&|$)/i.exec(String(url || ''));
@@ -463,16 +534,19 @@ export function getDownloadClient(settings) {
         });
         
         const tag = opts.tag || `songarr-${Date.now()}`;
-        const addRes = await session.request('/api/v2/torrents/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `urls=${encodeURIComponent(downloadUrl)}&tags=${encodeURIComponent(tag)}`
-        });
+        const t = await fetchTorrent(downloadUrl);
+        const form = new FormData();
+        if (t.magnet) form.append('urls', t.magnet);
+        else form.append('torrents', new Blob([t.torrent], { type: 'application/x-bittorrent' }), 'songarr.torrent');
+        form.append('tags', tag);
+        const addRes = await session.request('/api/v2/torrents/add', { method: 'POST', body: form });
         if (!addRes.ok) throw new Error(`qBittorrent add failed: ${addRes.status}`);
+        // An invalid torrent is still HTTP 200, with "Fails." as the body.
+        if ((await addRes.text()).trim() === 'Fails.') throw new Error('qBittorrent rejected the torrent');
 
         // qBittorrent's add call doesn't return the hash, and adds from a URL
         // finish asynchronously, so look the torrent up by its tag.
-        const known = opts.infoHash || infoHashFromMagnet(downloadUrl);
+        const known = opts.infoHash || t.infoHash;
         if (known) return known.toLowerCase();
         for (let i = 0; i < (opts.lookupAttempts ?? 20); i++) {
           const infoRes = await session.request(`/api/v2/torrents/info?tag=${encodeURIComponent(tag)}`);
@@ -486,6 +560,7 @@ export function getDownloadClient(settings) {
       }
       
       if (clientType === 'deluge') {
+        const t = await fetchTorrent(downloadUrl);
         const loginRes = await session.request('/json', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -497,7 +572,9 @@ export function getDownloadClient(settings) {
         const addRes = await session.request('/json', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: 'core.add_torrent_url', params: [downloadUrl, {}], id: 2 })
+          body: JSON.stringify(t.magnet
+            ? { method: 'core.add_torrent_magnet', params: [t.magnet, {}], id: 2 }
+            : { method: 'core.add_torrent_file', params: ['songarr.torrent', t.torrent.toString('base64'), {}], id: 2 })
         });
         const addJson = await addRes.json();
         if (addJson.error) throw new Error(`Deluge add failed: ${addJson.error.message}`);
@@ -505,12 +582,13 @@ export function getDownloadClient(settings) {
       }
       
       if (clientType === 'transmission') {
+        const t = await fetchTorrent(downloadUrl);
         const addRes = await session.request('/transmission/rpc', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             method: 'torrent-add',
-            arguments: { filename: downloadUrl }
+            arguments: t.magnet ? { filename: t.magnet } : { metainfo: t.torrent.toString('base64') }
           })
         });
         const addJson = await addRes.json();

@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 import { TEMP_DIR } from './config.js';
+import { torrentInfoHash } from './utils.js';
 
 // Fake indexers and download clients, mounted at /api/v1/mock when
 // SONGARR_MOCKS=1. They follow the real APIs closely enough to exercise the
@@ -30,11 +31,29 @@ function parseDownloadUrl(url) {
   };
 }
 
-function addMockTorrent(client, url, extra = {}) {
-  const { name, format } = parseDownloadUrl(url);
+// A minimal real .torrent; the mock clients read the release back out of its
+// comment, the way they read it from a magnet's query string.
+function mockTorrentFile(name, format) {
+  const b = str => `${Buffer.byteLength(str)}:${str}`;
+  const comment = `magnet:?dn=${encodeURIComponent(name)}&format=${format}`;
+  const info = `d6:lengthi10000000e${b('name')}${b(name)}12:piece lengthi262144e6:pieces20:${'x'.repeat(20)}e`;
+  return Buffer.from(`d${b('comment')}${b(comment)}4:info${info}e`);
+}
+
+// What a mock client was handed: { magnet } or { file } (a .torrent Buffer).
+function addMockTorrent(client, { magnet, file }, extra = {}) {
+  let source = magnet || '';
+  let hash = crypto.randomBytes(20).toString('hex');
+  if (file) {
+    const text = file.toString('latin1');
+    const m = /7:comment(\d+):/.exec(text);
+    source = m ? text.substr(m.index + m[0].length, Number(m[1])) : '';
+    hash = torrentInfoHash(file) || hash;
+  }
+  const { name, format } = parseDownloadUrl(source);
   const torrent = {
     id: nextId++,
-    hash: crypto.randomBytes(20).toString('hex'),
+    hash,
     name,
     trackTitle: name,
     format,
@@ -122,9 +141,14 @@ router.get('/jackett/api/v2.0/indexers/all/results', (req, res) => {
 });
 
 // 3. Mock torrent download URL (clients fetch this; the mocks never do)
+// Like Prowlarr: a .torrent file for some releases, a redirect to a magnet
+// for magnet-only ones.
 router.get('/download/torrent', (req, res) => {
   const { name, format } = parseDownloadUrl(req.originalUrl);
-  res.send(`magnet:?dn=${encodeURIComponent(name)}&format=${format}`);
+  if (format === 'flac') {
+    return res.type('application/x-bittorrent').send(mockTorrentFile(name, format));
+  }
+  res.redirect(302, `magnet:?dn=${encodeURIComponent(name)}&format=${format}`);
 });
 
 // 4. Mock qBittorrent
@@ -133,9 +157,13 @@ router.post('/qbittorrent/api/v2/auth/login', (req, res) => {
   res.send('Ok.');
 });
 
-router.post('/qbittorrent/api/v2/torrents/add', express.urlencoded({ extended: true }), (req, res) => {
-  const tags = (req.body.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-  addMockTorrent('qbittorrent', req.body.urls || '', { tags });
+router.post('/qbittorrent/api/v2/torrents/add', express.raw({ type: 'multipart/form-data', limit: '5mb' }), async (req, res) => {
+  const form = await new Response(req.body, { headers: { 'content-type': req.headers['content-type'] } }).formData();
+  const tags = String(form.get('tags') || '').split(',').map(t => t.trim()).filter(Boolean);
+  const upload = form.get('torrents');
+  addMockTorrent('qbittorrent', upload
+    ? { file: Buffer.from(await upload.arrayBuffer()) }
+    : { magnet: String(form.get('urls') || '') }, { tags });
   // Like the real client: no hash in the response.
   res.send('Ok.');
 });
@@ -183,8 +211,10 @@ router.post('/deluge/json', async (req, res) => {
     return res.json({ result: true, error: null, id });
   }
 
-  if (method === 'core.add_torrent_url') {
-    const torrent = addMockTorrent('deluge', params[0] || '');
+  if (method === 'core.add_torrent_magnet' || method === 'core.add_torrent_file') {
+    const torrent = addMockTorrent('deluge', method === 'core.add_torrent_magnet'
+      ? { magnet: params[0] || '' }
+      : { file: Buffer.from(params[1] || '', 'base64') });
     return res.json({ result: torrent.hash, error: null, id });
   }
 
@@ -230,7 +260,9 @@ router.post('/transmission/transmission/rpc', async (req, res) => {
   const { method, arguments: args } = req.body;
 
   if (method === 'torrent-add') {
-    const t = addMockTorrent('transmission', args.filename || '');
+    const t = addMockTorrent('transmission', args.metainfo
+      ? { file: Buffer.from(args.metainfo, 'base64') }
+      : { magnet: args.filename || '' });
     return res.json({
       result: 'success',
       arguments: { 'torrent-added': { id: t.id, name: t.name, hashString: t.hash } }
@@ -275,7 +307,7 @@ router.get('/sabnzbd/api', async (req, res) => {
   const sab = () => mockTorrents.filter(t => t.client === 'sabnzbd');
 
   if (mode === 'addurl') {
-    const t = addMockTorrent('sabnzbd', name || '');
+    const t = addMockTorrent('sabnzbd', { magnet: name || '' });
     t.hash = 'SABnzbd_nzo_' + t.hash.slice(0, 8);
     return res.json({ status: true, nzo_ids: [t.hash] });
   }

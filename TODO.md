@@ -4,6 +4,9 @@
 - Torrent path: Prowlarr/Jackett search, qBittorrent/Deluge clients, per-track quality rules, torrent scoring, active-download polling with YouTube fallback. Covered end to end by `npm test` against `server/mocks.js` (all four clients, both indexers); not yet run against real Prowlarr/qBittorrent.
 
 ## [PENDING]
+- Skip (or mark imported) tracks already in the library: the first real request on icebox (Khruangbin, Time (You and I)) was already at `music/Khruangbin/Time (You and I) (2020)/`.
+- SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr.
+- No auth: `GET /api/v1/settings` returns the indexer API key and client password to anyone on the LAN. Needs at least optional basic auth / masked secrets before a public beta.
 - (Jake's OK needed) Real-service test on icebox, where Prowlarr, qbittorrentvpn and Navidrome already run under ds:
   1. Run Songarr on icebox in the ds network (container from this repo, `/config` in appdata, `/music` -> the library's `music/`), or `npm start` on pop-os with SONGARR_DATA_DIR pointed at a scratch dir.
   2. Settings: Download Method `torrent`, Indexer `prowlarr` at `http://prowlarr:9696` + its API key (Prowlarr > Settings > General), client `qbittorrent` at `http://qbittorrentvpn:8080` + WebUI user/pass.
@@ -18,6 +21,7 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Songarr fetches the .torrent itself and uploads it to qBittorrent/Deluge/Transmission (magnet redirects pass through as magnets), like the *arrs. Found on icebox: qbittorrentvpn can't resolve `prowlarr` inside its VPN, so URL adds silently never appeared. Info hash read from the .torrent; qBit's "Fails." now raises. Mocks serve real .torrent files and magnet redirects. YouTube search used `--dump-json` on full results (>1 MB) and overflowed execFile's buffer, so every YouTube search returned nothing; now `--flat-playlist` (~6 KB). 30 tests.
 - Album folders are `Album (Year)` (library convention) when Deezer gives a release date; POST /tracks enriches a track that arrives without one. Fixed: a track posted with client-side lifecycle fields (e.g. a raw search result with `status: none`) was stored with that status and never queued; the server now owns status/error/filePath/createdAt/torrentHash, and re-adding a `none` track requeues it. Found in the first real run on icebox. 27 tests.
 - Seeding is a setting (default on): the torrent stays in the client after import and is removed with its download files at an optional ratio and/or seed-time limit (0 = seed until removed by hand). Library files are hardlinked (no extra space; copy fallback across filesystems, or `importMode: copy`); MP3s are always copied because ID3 tagging edits the file in place and would corrupt the seed. SABnzbd jobs are always removed. 7 new tests (25 total).
 - Container: multi-stage `Dockerfile` (vite build, prod deps, node:22-alpine with Alpine ffmpeg and upstream yt-dlp, updated at start unless YTDLP_AUTOUPDATE=false), PUID/PGID/TZ via `docker/entrypoint.sh` (su-exec), `/config` and `/music` volumes, healthcheck. Built and smoke-tested locally (492 MB). yt-dlp now runs with Node as its JS runtime (`--js-runtimes node:...`), which YouTube needs.
