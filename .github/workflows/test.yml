@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+      # Offline suite: fake indexers/clients, stubbed yt-dlp/ffmpeg.
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: songarr:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Container starts and reports healthy endpoints
+        run: |
+          docker run -d --name songarr -e YTDLP_AUTOUPDATE=false -p 3001:3001 songarr:ci
+          for i in $(seq 1 30); do curl -sf localhost:3001/api/v1/health && break; sleep 2; done
+          curl -sf localhost:3001/api/v1/status
+          # Bundled tools must actually work in the image (ffprobe once returned 0 for every file).
+          docker exec songarr node -e "import('./server/utils.js').then(async u => { const {execFileSync} = await import('child_process'); execFileSync('ffmpeg', ['-v','error','-y','-f','lavfi','-i','anullsrc=r=8000:cl=mono','-t','1','/tmp/1s.wav']); const d = await u.getFileDuration('/tmp/1s.wav'); if (Math.abs(d-1) > 0.05) { console.error('duration', d); process.exit(1); } console.log('ffprobe ok', d); })"
+          docker logs songarr

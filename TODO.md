@@ -1,28 +1,19 @@
 # Songarr TODO
 
 ## [IN PROGRESS]
-- Torrent path: Prowlarr/Jackett search, qBittorrent/Deluge clients, per-track quality rules, torrent scoring, active-download polling with YouTube fallback. Covered end to end by `npm test` against `server/mocks.js` (all four clients, both indexers); not yet run against real Prowlarr/qBittorrent.
+- **Public beta on GitHub (0.1.0), waiting on Jake's go-ahead.** Ready: tests (38) + live checks pass in the container on icebox; torrent and YouTube paths proven for real; history audited (no secrets, Prowlarr key absent). Added: Unlicense (as pvarr/snorkelwaffle), `tests` workflow (Node 20/22, build, image smoke test incl. ffprobe), release-only `publish` workflow (ghcr on `v*` tags, version must match package.json). Steps once approved: create `github.com/jlesterak/songarr` (public), `git remote add origin`, push main, tag `v0.1.0`, push the tag, then point the icebox override at `ghcr.io/jlesterak/songarr:0.1.0` (or keep `songarr:local`). Note TODO.md mentions the homelab (icebox, paths); fine for a personal repo, trim if wanted.
 
 ## [PENDING]
-- Scoring: prefers "Original Extended Mix" (15 seeders) over "Wake Me Up Single" (22); penalise extended/remix/mix variants the requested title lacks, and weigh duration.
+- Scoring: prefers "Original Extended Mix" (15 seeders) over "Wake Me Up Single" (22); penalise extended/remix/mix variants the requested title lacks, and weigh duration (durations work in the container now).
 - Deezer search from icebox returns only covers/remixes for some major-label originals (Gotye "Somebody That I Used To Know", Carly Rae Jepsen "Call Me Maybe"). Consider a MusicBrainz fallback for track metadata.
-- Navidrome scan: needs Jake's Navidrome user + Subsonic token (scan currently "Wrong username or password").
+- Navidrome scan: needs Jake's Navidrome user + Subsonic token (scan currently "Wrong username or password"); then confirm M3U sync + auto-scan.
 - Skip (or mark imported) tracks already in the library: the first real request on icebox (Khruangbin, Time (You and I)) was already at `music/Khruangbin/Time (You and I) (2020)/`.
-- SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr.
-- (Jake's OK needed) Real-service test on icebox, where Prowlarr, qbittorrentvpn and Navidrome already run under ds:
-  1. Run Songarr on icebox in the ds network (container from this repo, `/config` in appdata, `/music` -> the library's `music/`), or `npm start` on pop-os with SONGARR_DATA_DIR pointed at a scratch dir.
-  2. Settings: Download Method `torrent`, Indexer `prowlarr` at `http://prowlarr:9696` + its API key (Prowlarr > Settings > General), client `qbittorrent` at `http://qbittorrentvpn:8080` + WebUI user/pass.
-  3. Remote Path Mapping: qbittorrentvpn's save path (e.g. `/downloads`) -> the same folder as Songarr's container sees it (e.g. `/storage/downloads`). Check the qbittorrentvpn compose for the real mount.
-  4. Press Test Connections, request one well-seeded track, watch for: hash resolved via the `songarr-<id>` tag, file copied, torrent removed.
-  5. Check Cleanuparr's Queue Cleaner leaves `songarr-*` torrents alone (it manages that qBittorrent for Sonarr/Radarr).
-  6. Navidrome scan: set its URL (`http://navidrome:4533`), user and Subsonic token; confirm the scan fires and the track shows up.
-- SABnzbd/Transmission/Deluge paths work against the mocks only; qBittorrent is the one to prove for real.
-- (Jake) Decide where the image lives. Upstream ds needs a public image (`ghcr.io/jlesterak/songarr` in the draft, i.e. GitHub). Private alternative: build on icebox (`docker build -t songarr:local .`) and use a local ds override with that image; ds pulls will warn for it.
-- (Jake) Review `dockstarter/.apps/songarr/` before it goes anywhere; then install on icebox or open the upstream PR.
-- arm64 build (`docker buildx build --platform linux/arm64`) before claiming aarch64 support in the template.
-- Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
+- SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
+- arm64 build (`docker buildx build --platform linux/arm64`) before claiming aarch64 support in the template; publish is amd64-only until then.
+- (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- Deployed on icebox (2026-10-05): ds override block mirroring the template, image `songarr:local` built from `icebox:~/build/songarr` (clone of the icebox repo), `/config` in appdata, `/music` -> `/storage/media/music`, `/storage` for qBit's downloads (same path in both containers, so no remote path mapping). Template copy in `icebox:~/dockstarter-template-proposals/songarr/`. Settings: torrent mode, Prowlarr `http://prowlarr:9696`, qBittorrent `http://qbittorrentvpn:8080` (no login: qBit whitelists the Docker subnets), stall 30 min / 3 attempts.
 - **Torrent path proven on icebox (2026-10-05):** Survivor "Eye of the Tiger" via Prowlarr (TorrentDownload, 14 seeders) -> qbittorrentvpn (uploaded .torrent, 87 MB album in <1 min) -> single file picked from the album -> copied (MP3, seeding) to `Survivor/Rocky IV (2006)/04 - Eye of the Tiger.mp3`, 246 s / 320k, tagged; torrent left seeding.
 - ffprobe durations were always 0 in the container: `-of default=...:nocr=1` is rejected by Alpine's ffprobe. Now `-of csv=p=0`. `npm run check:live` gained an ffprobe-duration check (through Songarr's helper) and a YouTube search check.
 - Security: optional HTTP Basic auth (`SONGARR_USERNAME`/`SONGARR_PASSWORD`, healthcheck exempt, constant-time compare); secrets masked in the settings API (a posted mask keeps the stored value; Test Connections uses the stored secrets); open `cors()` removed (UI is same-origin, Vite proxies in dev). Template `.env.app.songarr` + README document it.
