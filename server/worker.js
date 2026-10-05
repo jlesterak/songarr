@@ -331,7 +331,14 @@ async function pollActiveDownloads(settings) {
   
   for (const track of activeTracks) {
     try {
-      const progressInfo = await client.getProgress(track.torrentHash);
+      let progressInfo;
+      try {
+        progressInfo = await client.getProgress(track.torrentHash);
+      } catch (err) {
+        // Client unreachable (VPN reconnect, restart): not the download's fault. Retry next cycle.
+        console.warn(`[Worker] Couldn't reach ${settings.torrentClient} for "${track.title}" (${err.message}); will retry.`);
+        continue;
+      }
       if (!progressInfo) {
         console.warn(`[Worker] Snatched torrent for track "${track.title}" not found in client. Resetting status to wanted.`);
         await db.updateTrack(track.id, { status: 'wanted', torrentHash: null, error: 'Torrent vanished from client' });

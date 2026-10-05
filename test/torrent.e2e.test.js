@@ -132,6 +132,15 @@ test('a stalled torrent is dropped for the next candidate; after the attempt lim
   await db.updateSettings({ stallTimeoutMinutes: 30, maxTorrentAttempts: 3 });
 });
 
+test('client unreachable while polling: the track stays active and resumes', async () => {
+  await grab({ id: 'un1', artist: 'Air', title: 'La Femme d Argent', client: 'qbittorrent', settings: { seedAfterImport: false } });
+  await db.updateTrack('un1', { status: 'snatched' });
+  await db.updateSettings({ torrentClientUrl: 'http://127.0.0.1:1' });
+  await worker.processQueue();
+  assert.equal(db.getTrack('un1').status, 'snatched');
+  await db.updateSettings({ torrentClientUrl: clientUrl.qbittorrent() });
+});
+
 test('indexer failure falls back to YouTube, and a failed YouTube download marks the track failed', async () => {
   await db.updateSettings({ prowlarrUrl: `${base}/nonexistent` });
   await db.addTrack({ id: 'fb1', title: 'Nothing', artists: ['Nobody'], album: 'X', duration: 100 });

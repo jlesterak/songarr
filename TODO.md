@@ -4,6 +4,10 @@
 - Torrent path: Prowlarr/Jackett search, qBittorrent/Deluge clients, per-track quality rules, torrent scoring, active-download polling with YouTube fallback. Covered end to end by `npm test` against `server/mocks.js` (all four clients, both indexers); not yet run against real Prowlarr/qBittorrent.
 
 ## [PENDING]
+- Beta blockers before GitHub: (1) one torrent grab imported end to end on icebox; (2) auth or masked secrets (see below); (3) clearing the queue must cancel in-flight work (a cleared remix still imported to the library on icebox, deleted by hand).
+- Scoring: prefers "Original Extended Mix" (15 seeders) over "Wake Me Up Single" (22); penalise extended/remix/mix variants the requested title lacks, and weigh duration.
+- Deezer search from icebox returns only covers/remixes for some major-label originals (Gotye "Somebody That I Used To Know", Carly Rae Jepsen "Call Me Maybe"). Consider a MusicBrainz fallback for track metadata.
+- Navidrome scan: needs Jake's Navidrome user + Subsonic token (scan currently "Wrong username or password").
 - Skip (or mark imported) tracks already in the library: the first real request on icebox (Khruangbin, Time (You and I)) was already at `music/Khruangbin/Time (You and I) (2020)/`.
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr.
 - No auth: `GET /api/v1/settings` returns the indexer API key and client password to anyone on the LAN. Needs at least optional basic auth / masked secrets before a public beta.
@@ -21,6 +25,7 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Polling: an unreachable client (VPN reconnect) no longer marks the track failed; it retries next cycle (Avicii test on icebox failed on one "fetch failed"). 34 tests.
 - Crash recovery keeps tracks whose download the client already holds (has a hash): polling resumes, an interrupted import (`downloaded`) is re-polled. It used to reset them to wanted, which re-grabbed a duplicate qBit rejects and orphaned the original (seen on icebox after a redeploy). 33 tests.
 - First real run on icebox (2026-10-05): ds override + `songarr:local` built from the icebox repo, Prowlarr + qbittorrentvpn connected; YouTube path imported Pharrell "Happy" to `music/Pharrell Williams/G I R L (2014)/05 - ...mp3` (320 kbps, tagged, jake-owned). Cleanuparr leaves Songarr torrents alone (Download Cleaner off; Queue Cleaner / malware blocker only touch Sonarr/Radarr queue items).
 - Dead torrents: no progress for `stallTimeoutMinutes` (default 30) -> removed from the client, remembered in `triedTorrents`, next-best untried release snatched; after `maxTorrentAttempts` (default 3) -> YouTube. Settings UI fields added. Found on icebox: Pharrell "Happy" (Prowlarr said 99 seeders) sat in qBit metaDL with 0 peers while qBit itself was connected (354 DHT nodes). 32 tests.
