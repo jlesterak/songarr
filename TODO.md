@@ -4,13 +4,12 @@
 - Torrent path: Prowlarr/Jackett search, qBittorrent/Deluge clients, per-track quality rules, torrent scoring, active-download polling with YouTube fallback. Covered end to end by `npm test` against `server/mocks.js` (all four clients, both indexers); not yet run against real Prowlarr/qBittorrent.
 
 ## [PENDING]
-- Beta blockers before GitHub: (1) one torrent grab imported end to end on icebox; (2) auth or masked secrets (see below); (3) clearing the queue must cancel in-flight work (a cleared remix still imported to the library on icebox, deleted by hand).
+- Beta blocker before GitHub: one torrent grab imported end to end on icebox (public single-track torrents are mostly dead; try album mode or a well-seeded album).
 - Scoring: prefers "Original Extended Mix" (15 seeders) over "Wake Me Up Single" (22); penalise extended/remix/mix variants the requested title lacks, and weigh duration.
 - Deezer search from icebox returns only covers/remixes for some major-label originals (Gotye "Somebody That I Used To Know", Carly Rae Jepsen "Call Me Maybe"). Consider a MusicBrainz fallback for track metadata.
 - Navidrome scan: needs Jake's Navidrome user + Subsonic token (scan currently "Wrong username or password").
 - Skip (or mark imported) tracks already in the library: the first real request on icebox (Khruangbin, Time (You and I)) was already at `music/Khruangbin/Time (You and I) (2020)/`.
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr.
-- No auth: `GET /api/v1/settings` returns the indexer API key and client password to anyone on the LAN. Needs at least optional basic auth / masked secrets before a public beta.
 - (Jake's OK needed) Real-service test on icebox, where Prowlarr, qbittorrentvpn and Navidrome already run under ds:
   1. Run Songarr on icebox in the ds network (container from this repo, `/config` in appdata, `/music` -> the library's `music/`), or `npm start` on pop-os with SONGARR_DATA_DIR pointed at a scratch dir.
   2. Settings: Download Method `torrent`, Indexer `prowlarr` at `http://prowlarr:9696` + its API key (Prowlarr > Settings > General), client `qbittorrent` at `http://qbittorrentvpn:8080` + WebUI user/pass.
@@ -25,6 +24,8 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Security: optional HTTP Basic auth (`SONGARR_USERNAME`/`SONGARR_PASSWORD`, healthcheck exempt, constant-time compare); secrets masked in the settings API (a posted mask keeps the stored value; Test Connections uses the stored secrets); open `cors()` removed (UI is same-origin, Vite proxies in dev). Template `.env.app.songarr` + README document it.
+- Clearing the queue cancels in-flight work: queued torrents are removed from the client, a snatch that lands after the clear is removed, and a YouTube download that finishes after it is deleted instead of imported. 38 tests.
 - Container healthcheck hits a new `/api/v1/health`; `/api/v1/status` no longer walks the library per request (69 s over NFS on icebox, so the container showed unhealthy and every UI refresh crawled nicebox). Library size is cached and refreshed in the background every 30 min, and counts FLAC/Opus/OGG/WAV/AAC too. Imports record `source` (torrent/youtube); a YouTube import clears torrent fields left from stalled attempts. 35 tests.
 - Stall fallback proven live on icebox: Avicii "Wake Me Up", 3 dead torrents dropped in turn, then YouTube imported the right cut (244 s, 320k) to `Avicii/True (2013)/`.
 - Polling: an unreachable client (VPN reconnect) no longer marks the track failed; it retries next cycle (Avicii test on icebox failed on one "fetch failed"). 34 tests.

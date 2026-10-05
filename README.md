@@ -101,6 +101,8 @@ Defaults are relative to the working directory; each can be moved with an enviro
 
 Playlists are written to `<library>/Playlists/` as M3U files.
 
+**Security.** Set `SONGARR_USERNAME` and `SONGARR_PASSWORD` to require a login (HTTP Basic auth) for the UI and API; `/api/v1/health` stays open for the container healthcheck. Without them anyone who can reach the port can use Songarr. Stored secrets (indexer API key, client password, Navidrome token) are never sent back to the browser: the settings API returns `********` for them, and saving that mask keeps the stored value.
+
 `SONGARR_MOCKS=1` mounts fake Prowlarr/Jackett/qBittorrent/Deluge/Transmission/SABnzbd endpoints at `/api/v1/mock` for development. Leave it unset in real installs.
 
 ---

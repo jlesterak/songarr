@@ -14,7 +14,6 @@
     "check:live": "node scripts/check-live.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
     "express": "^4.19.2",
     "node-id3": "^0.2.6"
   },

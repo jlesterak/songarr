@@ -1,5 +1,5 @@
 import express from 'express';
-import cors from 'cors';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs/promises';
 import * as db from './db.js';
@@ -47,11 +47,44 @@ export function librarySize(dir) {
   return sizeCache.text;
 }
 
+// Secrets never leave the server: GET returns a mask, and a mask posted back
+// means "keep the stored value".
+export const SECRET_FIELDS = ['prowlarrApiKey', 'torrentClientPassword', 'navidromeToken'];
+export const SECRET_MASK = '********';
+
+export function maskSecrets(settings) {
+  const out = { ...settings };
+  for (const k of SECRET_FIELDS) if (out[k]) out[k] = SECRET_MASK;
+  return out;
+}
+
+export function unmaskSecrets(body = {}) {
+  const out = { ...body };
+  for (const k of SECRET_FIELDS) if (out[k] === SECRET_MASK) delete out[k];
+  return out;
+}
+
 export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = {}) {
   const app = express();
 
-  app.use(cors());
+  // No CORS: the UI is same-origin (Vite proxies /api in dev), and an open
+  // CORS policy would let any website in the user's browser drive this API.
   app.use(express.json());
+
+  // Optional login: HTTP Basic auth when SONGARR_USERNAME/SONGARR_PASSWORD are
+  // set. The healthcheck stays open.
+  const user = process.env.SONGARR_USERNAME || '';
+  const pass = process.env.SONGARR_PASSWORD || '';
+  if (user && pass) {
+    const expected = Buffer.from(`${user}:${pass}`);
+    app.use((req, res, next) => {
+      if (req.path === '/api/v1/health') return next();
+      const m = /^Basic (.+)$/.exec(req.headers.authorization || '');
+      const given = m ? Buffer.from(m[1], 'base64') : Buffer.alloc(0);
+      if (given.length === expected.length && crypto.timingSafeEqual(given, expected)) return next();
+      res.set('WWW-Authenticate', 'Basic realm="Songarr", charset="UTF-8"').status(401).send('Authentication required');
+    });
+  }
 
   // Fake Prowlarr/Jackett and download-client endpoints for development and tests.
   // Off unless SONGARR_MOCKS=1, so a real install never exposes them.
@@ -151,6 +184,16 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
   // 6. Clear completed tracks
   app.post('/api/v1/tracks/clear', async (req, res) => {
     try {
+      // Take the queue's downloads out of the client too, or they'd be orphaned.
+      const settings = db.getSettings();
+      const active = db.getTracks().filter(t => t.status !== 'imported' && t.torrentHash);
+      if (active.length) {
+        const client = utils.getDownloadClient(settings);
+        for (const t of active) {
+          await client.removeTorrent(t.torrentHash, true).catch(err =>
+            console.warn(`[API] Couldn't remove download for "${t.title}": ${err.message}`));
+        }
+      }
       await db.clearQueue();
       res.json({ success: true });
     } catch (err) {
@@ -301,13 +344,13 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
 
   // 10. Settings API
   app.get('/api/v1/settings', (req, res) => {
-    res.json(db.getSettings());
+    res.json(maskSecrets(db.getSettings()));
   });
 
   app.post('/api/v1/settings', async (req, res) => {
     try {
       const oldSettings = db.getSettings();
-      const updated = await db.updateSettings(req.body);
+      const updated = await db.updateSettings(unmaskSecrets(req.body));
     
       // If autoDownload status changed, adjust background worker
       if (oldSettings.autoDownload !== updated.autoDownload || oldSettings.downloadInterval !== updated.downloadInterval) {
@@ -315,7 +358,7 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
         worker.startWorker();
       }
     
-      res.json(updated);
+      res.json(maskSecrets(updated));
     } catch (err) {
       res.status(500).json({ error: 'Failed to save settings', details: err.message });
     }
@@ -324,7 +367,8 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
   // Test settings connection
   app.post('/api/v1/settings/test', async (req, res) => {
     try {
-      const results = await utils.testConnections(req.body);
+      // The UI only has masked secrets; test with the stored ones behind them.
+      const results = await utils.testConnections({ ...db.getSettings(), ...unmaskSecrets(req.body) });
       res.json(results);
     } catch (err) {
       res.status(500).json({ error: 'Failed to run connection tests', details: err.message });

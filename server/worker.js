@@ -374,6 +374,10 @@ async function pollActiveDownloads(settings) {
       }
       
       if (progressInfo.isFinished) {
+        if (removedFromQueue(track)) {
+          await client.removeTorrent(track.torrentHash, true);
+          continue;
+        }
         console.log(`[Worker] Torrent finished for track: "${track.title}". Starting post-processing...`);
         await db.updateTrack(track.id, { status: 'downloaded' });
         
@@ -463,7 +467,14 @@ async function pollActiveDownloads(settings) {
 }
 
 // Direct YouTube Downloader Helper
+// True once the track was removed from the queue (e.g. "clear queue") while
+// the worker was busy with it; in-flight work must then not land anywhere.
+function removedFromQueue(track) {
+  return !db.getTrack(track.id);
+}
+
 async function downloadDirectFromYouTube(track, settings, format, quality) {
+  if (removedFromQueue(track)) return;
   try {
     const artist = track.artists[0];
     const searchTerms = `${artist} ${track.title}`;
@@ -508,6 +519,13 @@ async function downloadDirectFromYouTube(track, settings, format, quality) {
 
     console.log(`[Worker] Downloading audio to: ${destFile}`);
     await utils.downloadTrackAudio(chosenVideo.url, destFile, actualFormat, actualQuality);
+
+    if (removedFromQueue(track)) {
+      console.log(`[Worker] "${track.title}" was removed from the queue mid-download; discarding ${destFile}`);
+      await fs.rm(destFile, { force: true });
+      await fs.rmdir(path.dirname(destFile)).catch(() => {}); // only if now empty
+      return;
+    }
 
     await db.updateTrack(track.id, { status: 'downloaded' });
 
@@ -562,6 +580,7 @@ export async function processQueue() {
       console.log(`[Worker] Found ${wantedTracks.length} wanted tracks to process.`);
 
       for (const track of wantedTracks) {
+        if (removedFromQueue(track)) continue;
         console.log(`[Worker] Processing track: ${track.artists.join(', ')} - ${track.title}`);
         
         const rule = getTrackQualityRule(track, settings);
@@ -615,6 +634,11 @@ export async function processQueue() {
             });
             if (!hash) {
               throw new Error(`${settings.torrentClient} did not return an id for the added download`);
+            }
+            if (removedFromQueue(track)) {
+              console.log(`[Worker] "${track.title}" was removed from the queue mid-snatch; removing its torrent.`);
+              await client.removeTorrent(hash, true);
+              continue;
             }
             await db.updateTrack(track.id, {
               torrentHash: hash,

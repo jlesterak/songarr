@@ -141,6 +141,19 @@ test('client unreachable while polling: the track stays active and resumes', asy
   await db.updateSettings({ torrentClientUrl: clientUrl.qbittorrent() });
 });
 
+test('clearing the queue removes queued downloads from the client', async () => {
+  await db.updateSettings({ torrentClient: 'qbittorrent', torrentClientUrl: clientUrl.qbittorrent(), prowlarrUrl: `${base}/prowlarr`, indexerType: 'prowlarr', downloadMethod: 'torrent' });
+  await db.addTrack({ id: 'cl1', title: 'Clear Me', artists: ['Q'], album: 'X', duration: 100 });
+  await worker.processQueue();
+  const hash = db.getTrack('cl1').torrentHash;
+  assert.match(hash, /^[0-9a-f]{40}$/);
+  const res = await fetch(base.replace('/mock', '/tracks/clear'), { method: 'POST' });
+  assert.equal(res.status, 200);
+  assert.equal(db.getTrack('cl1'), null);
+  const left = await (await fetch(`${base}/qbittorrent/api/v2/torrents/info?hashes=${hash}`)).json();
+  assert.deepEqual(left, []);
+});
+
 test('indexer failure falls back to YouTube, and a failed YouTube download marks the track failed', async () => {
   await db.updateSettings({ prowlarrUrl: `${base}/nonexistent` });
   await db.addTrack({ id: 'fb1', title: 'Nothing', artists: ['Nobody'], album: 'X', duration: 100 });
