@@ -1,7 +1,7 @@
 # Songarr TODO
 
 ## [IN PROGRESS]
-- **Public beta on GitHub (0.1.0), waiting on Jake's go-ahead.** Ready: tests (38) + live checks pass in the container on icebox; torrent and YouTube paths proven for real; history audited (no secrets, Prowlarr key absent). Added: Unlicense (as pvarr/snorkelwaffle), `tests` workflow (Node 20/22, build, image smoke test incl. ffprobe), release-only `publish` workflow (ghcr on `v*` tags, version must match package.json). Steps once approved: create `github.com/jlesterak/songarr` (public), `git remote add origin`, push main, tag `v0.1.0`, push the tag, then point the icebox override at `ghcr.io/jlesterak/songarr:0.1.0` (or keep `songarr:local`). Note TODO.md mentions the homelab (icebox, paths); fine for a personal repo, trim if wanted.
+- Public beta 0.1.0 on GitHub (`github.com/jlesterak/songarr`, Jake approved 2026-10-05): watch the first `tests` run and the `publish` run for the `v0.1.0` tag (ghcr.io/jlesterak/songarr:0.1.0). Then decide whether icebox switches from `songarr:local` to the ghcr image.
 
 ## [PENDING]
 - Scoring: prefers "Original Extended Mix" (15 seeders) over "Wake Me Up Single" (22); penalise extended/remix/mix variants the requested title lacks, and weigh duration (durations work in the container now).
@@ -13,6 +13,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- Published (2026-10-05): public repo `jlesterak/songarr`, `main` + tag `v0.1.0`. Audited first: no secrets in history; Unlicense; release-only image publishing.
 - Deployed on icebox (2026-10-05): ds override block mirroring the template, image `songarr:local` built from `icebox:~/build/songarr` (clone of the icebox repo), `/config` in appdata, `/music` -> `/storage/media/music`, `/storage` for qBit's downloads (same path in both containers, so no remote path mapping). Template copy in `icebox:~/dockstarter-template-proposals/songarr/`. Settings: torrent mode, Prowlarr `http://prowlarr:9696`, qBittorrent `http://qbittorrentvpn:8080` (no login: qBit whitelists the Docker subnets), stall 30 min / 3 attempts.
 - **Torrent path proven on icebox (2026-10-05):** Survivor "Eye of the Tiger" via Prowlarr (TorrentDownload, 14 seeders) -> qbittorrentvpn (uploaded .torrent, 87 MB album in <1 min) -> single file picked from the album -> copied (MP3, seeding) to `Survivor/Rocky IV (2006)/04 - Eye of the Tiger.mp3`, 246 s / 320k, tagged; torrent left seeding.
 - ffprobe durations were always 0 in the container: `-of default=...:nocr=1` is rejected by Alpine's ffprobe. Now `-of csv=p=0`. `npm run check:live` gained an ffprobe-duration check (through Songarr's helper) and a YouTube search check.
