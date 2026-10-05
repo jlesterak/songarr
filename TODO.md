@@ -4,7 +4,6 @@
 - Torrent path: Prowlarr/Jackett search, qBittorrent/Deluge clients, per-track quality rules, torrent scoring, active-download polling with YouTube fallback. Covered end to end by `npm test` against `server/mocks.js` (all four clients, both indexers); not yet run against real Prowlarr/qBittorrent.
 
 ## [PENDING]
-- Beta blocker before GitHub: one torrent grab imported end to end on icebox (public single-track torrents are mostly dead; try album mode or a well-seeded album).
 - Scoring: prefers "Original Extended Mix" (15 seeders) over "Wake Me Up Single" (22); penalise extended/remix/mix variants the requested title lacks, and weigh duration.
 - Deezer search from icebox returns only covers/remixes for some major-label originals (Gotye "Somebody That I Used To Know", Carly Rae Jepsen "Call Me Maybe"). Consider a MusicBrainz fallback for track metadata.
 - Navidrome scan: needs Jake's Navidrome user + Subsonic token (scan currently "Wrong username or password").
@@ -24,6 +23,8 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- **Torrent path proven on icebox (2026-10-05):** Survivor "Eye of the Tiger" via Prowlarr (TorrentDownload, 14 seeders) -> qbittorrentvpn (uploaded .torrent, 87 MB album in <1 min) -> single file picked from the album -> copied (MP3, seeding) to `Survivor/Rocky IV (2006)/04 - Eye of the Tiger.mp3`, 246 s / 320k, tagged; torrent left seeding.
+- ffprobe durations were always 0 in the container: `-of default=...:nocr=1` is rejected by Alpine's ffprobe. Now `-of csv=p=0`. `npm run check:live` gained an ffprobe-duration check (through Songarr's helper) and a YouTube search check.
 - Security: optional HTTP Basic auth (`SONGARR_USERNAME`/`SONGARR_PASSWORD`, healthcheck exempt, constant-time compare); secrets masked in the settings API (a posted mask keeps the stored value; Test Connections uses the stored secrets); open `cors()` removed (UI is same-origin, Vite proxies in dev). Template `.env.app.songarr` + README document it.
 - Clearing the queue cancels in-flight work: queued torrents are removed from the client, a snatch that lands after the clear is removed, and a YouTube download that finishes after it is deleted instead of imported. 38 tests.
 - Container healthcheck hits a new `/api/v1/health`; `/api/v1/status` no longer walks the library per request (69 s over NFS on icebox, so the container showed unhealthy and every UI refresh crawled nicebox). Library size is cached and refreshed in the background every 30 min, and counts FLAC/Opus/OGG/WAV/AAC too. Imports record `source` (torrent/youtube); a YouTube import clears torrent fields left from stalled attempts. 35 tests.

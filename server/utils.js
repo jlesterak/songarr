@@ -17,7 +17,7 @@ export async function getFileDuration(filePath) {
     const { stdout } = await execFileAsync(FFPROBE_PATH, [
       '-v', 'error',
       '-show_entries', 'format=duration',
-      '-of', 'default=noprint_wrappers=1:nocr=1',
+      '-of', 'csv=p=0', // portable: Alpine's ffprobe rejects default's nocr option
       filePath
     ]);
     return parseFloat(stdout.trim()) || 0;
