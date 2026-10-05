@@ -42,6 +42,11 @@ let db = {
     seedRatioLimit: 0,
     seedTimeLimitHours: 0,
     importMode: 'hardlink', // 'hardlink' or 'copy'
+    // A torrent that makes no progress for this long is dropped and the next
+    // candidate tried (public indexers report seeders for dead torrents);
+    // after maxTorrentAttempts dead ones, YouTube.
+    stallTimeoutMinutes: 30,
+    maxTorrentAttempts: 3,
     qualityRules: [] // array of { id, type, name, format, quality }
   }
 };

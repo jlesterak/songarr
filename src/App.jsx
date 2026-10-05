@@ -36,6 +36,8 @@ export default function App() {
     seedAfterImport: true,
     seedRatioLimit: 0,
     seedTimeLimitHours: 0,
+    stallTimeoutMinutes: 30,
+    maxTorrentAttempts: 3,
     importMode: 'hardlink',
     qualityRules: []
   });
@@ -1347,6 +1349,31 @@ export default function App() {
                             <span className="form-help">Ratio, then hours seeded. Whichever is reached first removes the torrent and its download files; the library copy stays.</span>
                           </div>
                         )}
+
+                        <div className="form-group">
+                          <label className="form-label">Dead Torrents (minutes without progress, attempts)</label>
+                          <div style={{display: 'flex', gap: '0.5rem'}}>
+                            <input 
+                              type="number" 
+                              min="0" 
+                              step="5" 
+                              className="input-text" 
+                              placeholder="Minutes"
+                              value={settings.stallTimeoutMinutes}
+                              onChange={e => setSettings({...settings, stallTimeoutMinutes: Number(e.target.value)})}
+                            />
+                            <input 
+                              type="number" 
+                              min="1" 
+                              step="1" 
+                              className="input-text" 
+                              placeholder="Attempts"
+                              value={settings.maxTorrentAttempts}
+                              onChange={e => setSettings({...settings, maxTorrentAttempts: Number(e.target.value)})}
+                            />
+                          </div>
+                          <span className="form-help">A torrent with no progress for this long is removed and the next-best release tried; after this many dead ones, YouTube. 0 minutes = wait forever.</span>
+                        </div>
 
                         <div className="form-group">
                           <label className="form-label">Import Method</label>

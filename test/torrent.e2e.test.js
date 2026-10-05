@@ -118,6 +118,20 @@ test('album mode copies every file and points filePath at the requested track', 
   assert.ok(fs.existsSync(path.join(path.dirname(t.filePath), '02 - Extra Track.mp3')));
 });
 
+test('a stalled torrent is dropped for the next candidate; after the attempt limit, YouTube', async () => {
+  await grab({
+    id: 'st1', artist: 'Nobody', title: 'Dead Torrent', client: 'qbittorrent',
+    settings: { stallTimeoutMinutes: 0.0001, maxTorrentAttempts: 2 }
+  });
+  const t = await runUntilSettled('st1', 10);
+  // Both dead releases tried in turn, then the YouTube fallback (which fails offline).
+  assert.deepEqual(t.triedTorrents, ['Nobody - Dead Torrent [MP3 320kbps] dead-a', 'Nobody - Dead Torrent [MP3 320kbps] dead-b']);
+  assert.equal(t.status, 'failed');
+  const res = await fetch(`${base}/qbittorrent/api/v2/torrents/info?tag=songarr-st1`);
+  assert.deepEqual(await res.json(), [], 'stalled torrents removed from the client');
+  await db.updateSettings({ stallTimeoutMinutes: 30, maxTorrentAttempts: 3 });
+});
+
 test('indexer failure falls back to YouTube, and a failed YouTube download marks the track failed', async () => {
   await db.updateSettings({ prowlarrUrl: `${base}/nonexistent` });
   await db.addTrack({ id: 'fb1', title: 'Nothing', artists: ['Nobody'], album: 'X', duration: 100 });

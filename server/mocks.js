@@ -27,7 +27,8 @@ function parseDownloadUrl(url) {
   const params = new URLSearchParams(String(url).split('?')[1] || '');
   return {
     name: params.get('name') || params.get('dn') || 'mock_torrent',
-    format: params.get('format') || 'mp3'
+    format: params.get('format') || 'mp3',
+    dead: params.get('dead') === '1'
   };
 }
 
@@ -50,13 +51,14 @@ function addMockTorrent(client, { magnet, file }, extra = {}) {
     source = m ? text.substr(m.index + m[0].length, Number(m[1])) : '';
     hash = torrentInfoHash(file) || hash;
   }
-  const { name, format } = parseDownloadUrl(source);
+  const { name, format, dead } = parseDownloadUrl(source);
   const torrent = {
     id: nextId++,
     hash,
     name,
     trackTitle: name,
     format,
+    dead,
     progress: 0,
     ratio: 0,
     seedingTime: 0,
@@ -94,6 +96,7 @@ async function createMockAudioFiles(torrent) {
 }
 
 async function advance(torrent) {
+  if (torrent.dead) return;
   if (torrent.progress >= 100) {
     torrent.ratio += 0.5;
     torrent.seedingTime += 3600;
@@ -107,8 +110,14 @@ async function advance(torrent) {
 
 function releases(req, query) {
   const cleanQuery = String(query || '').replace(/[^a-zA-Z0-9\s-]/g, '').trim() || 'Mock Track';
-  const link = format => `${baseUrl(req)}/download/torrent?name=${encodeURIComponent(cleanQuery)}&format=${format}`;
+  const link = (format, dead) => `${baseUrl(req)}/download/torrent?name=${encodeURIComponent(cleanQuery)}&format=${format}${dead ? '&dead=1' : ''}`;
+  // Queries naming "Dead Torrent" get two well-"seeded" releases that never download.
+  const deadOnes = /dead torrent/i.test(cleanQuery) ? [
+    { title: `${cleanQuery} [MP3 320kbps] dead-a`, link: link('mp3', true), size: 10000000, seeders: 900, peers: 1 },
+    { title: `${cleanQuery} [MP3 320kbps] dead-b`, link: link('mp3', true), size: 10000000, seeders: 800, peers: 1 }
+  ] : [];
   return [
+    ...deadOnes,
     { title: `${cleanQuery} [FLAC] [Lossless]`, link: link('flac'), size: 35000000, seeders: 42, peers: 5 },
     { title: `${cleanQuery} [MP3 320kbps]`, link: link('mp3'), size: 10000000, seeders: 15, peers: 1 }
   ];
@@ -144,11 +153,11 @@ router.get('/jackett/api/v2.0/indexers/all/results', (req, res) => {
 // Like Prowlarr: a .torrent file for some releases, a redirect to a magnet
 // for magnet-only ones.
 router.get('/download/torrent', (req, res) => {
-  const { name, format } = parseDownloadUrl(req.originalUrl);
+  const { name, format, dead } = parseDownloadUrl(req.originalUrl);
   if (format === 'flac') {
     return res.type('application/x-bittorrent').send(mockTorrentFile(name, format));
   }
-  res.redirect(302, `magnet:?dn=${encodeURIComponent(name)}&format=${format}`);
+  res.redirect(302, `magnet:?dn=${encodeURIComponent(name)}&format=${format}${dead ? '&dead=1' : ''}`);
 });
 
 // 4. Mock qBittorrent

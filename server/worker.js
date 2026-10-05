@@ -230,6 +230,15 @@ export async function linkOrCopy(src, dest, settings, { willModify = false } = {
 
 // Has a seeding torrent reached its ratio or seed-time limit? No limits set
 // means it seeds until someone removes it.
+// True when a downloading torrent has made no progress for the stall timeout.
+export function isStalled(track, progress, settings, now = Date.now()) {
+  const minutes = Number(settings.stallTimeoutMinutes ?? 30);
+  if (!(minutes > 0)) return false;
+  if (progress > (track.lastProgress ?? 0)) return false;
+  const since = Date.parse(track.lastProgressAt || track.snatchedAt || '') || now;
+  return now - since > minutes * 60000;
+}
+
 export function seedLimitReached(info, settings) {
   const ratioLimit = Number(settings.seedRatioLimit) || 0;
   const hoursLimit = Number(settings.seedTimeLimitHours) || 0;
@@ -330,6 +339,28 @@ async function pollActiveDownloads(settings) {
       }
       
       console.log(`[Worker] Track "${track.title}" progress: ${progressInfo.progress}% (${progressInfo.isFinished ? 'Finished' : 'Downloading'})`);
+
+      if (!progressInfo.isFinished) {
+        if (!track.snatchedAt && !track.lastProgressAt) {
+          // Snatched before stall tracking existed: start its clock now.
+          await db.updateTrack(track.id, { lastProgressAt: new Date().toISOString() });
+          continue;
+        }
+        if (isStalled(track, progressInfo.progress, settings)) {
+          console.warn(`[Worker] "${track.title}": no progress for ${settings.stallTimeoutMinutes} min on "${track.torrentName}". Dropping it and trying the next candidate.`);
+          await client.removeTorrent(track.torrentHash, true);
+          await db.updateTrack(track.id, {
+            status: 'wanted',
+            torrentHash: null,
+            triedTorrents: [...(track.triedTorrents || []), track.torrentName],
+            error: `Stalled: ${track.torrentName}`
+          });
+          continue;
+        }
+        if (progressInfo.progress > (track.lastProgress ?? 0)) {
+          await db.updateTrack(track.id, { lastProgress: progressInfo.progress, lastProgressAt: new Date().toISOString() });
+        }
+      }
       
       if (track.status === 'snatched' && progressInfo.progress > 0) {
         await db.updateTrack(track.id, { status: 'downloading' });
@@ -537,10 +568,15 @@ export async function processQueue() {
             
             const query = `${track.artists[0]} - ${track.title}`;
             console.log(`[Worker] Searching torrent indexers for: "${query}"`);
-            const candidates = await utils.searchIndexer(query, settings);
+            const tried = track.triedTorrents || [];
+            if (tried.length >= (Number(settings.maxTorrentAttempts) || 3)) {
+              throw new Error(`${tried.length} torrents stalled`);
+            }
+            const candidates = (await utils.searchIndexer(query, settings))
+              .filter(c => !tried.includes(c.title));
             
             if (candidates.length === 0) {
-              throw new Error('No torrent candidates found');
+              throw new Error(tried.length ? 'No untried torrent candidates left' : 'No torrent candidates found');
             }
             
             const scored = candidates.map(c => ({
@@ -570,7 +606,10 @@ export async function processQueue() {
             }
             await db.updateTrack(track.id, {
               torrentHash: hash,
-              torrentName: best.candidate.title
+              torrentName: best.candidate.title,
+              snatchedAt: new Date().toISOString(),
+              lastProgress: 0,
+              lastProgressAt: null
             });
           } catch (err) {
             console.error(`[Worker] Failed to snatch torrent for ${track.title}:`, err.message);

@@ -4,7 +4,7 @@ import { useTempEnv, quietConsole } from './helpers.js';
 
 const env = useTempEnv();
 quietConsole();
-const { scoreCandidate, scoreTorrentCandidate, mapRemotePath, seedLimitReached } = await import('../server/worker.js');
+const { scoreCandidate, scoreTorrentCandidate, mapRemotePath, seedLimitReached, isStalled } = await import('../server/worker.js');
 const { audioQualityArg, infoHashFromMagnet } = await import('../server/utils.js');
 after(() => env.cleanup());
 
@@ -72,4 +72,13 @@ test('seed limits: off at 0, either limit triggers', () => {
   assert.equal(seedLimitReached(info, { seedTimeLimitHours: 3 }), true);
   assert.equal(seedLimitReached(info, { seedRatioLimit: 5, seedTimeLimitHours: 4 }), false);
   assert.equal(seedLimitReached(info, { seedRatioLimit: '1' }), true, 'string values from the settings form');
+});
+
+test('stall check: progress resets the clock; 0 disables it', () => {
+  const now = Date.parse('2026-10-05T12:00:00Z');
+  const t = { snatchedAt: '2026-10-05T11:00:00Z', lastProgress: 0 };
+  assert.equal(isStalled(t, 0, { stallTimeoutMinutes: 30 }, now), true);
+  assert.equal(isStalled(t, 5, { stallTimeoutMinutes: 30 }, now), false);
+  assert.equal(isStalled({ ...t, lastProgress: 5, lastProgressAt: '2026-10-05T11:45:00Z' }, 5, { stallTimeoutMinutes: 30 }, now), false);
+  assert.equal(isStalled(t, 0, { stallTimeoutMinutes: 0 }, now), false);
 });
