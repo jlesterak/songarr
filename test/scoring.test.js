@@ -4,7 +4,7 @@ import { useTempEnv, quietConsole } from './helpers.js';
 
 const env = useTempEnv();
 quietConsole();
-const { scoreCandidate, scoreTorrentCandidate, mapRemotePath } = await import('../server/worker.js');
+const { scoreCandidate, scoreTorrentCandidate, mapRemotePath, seedLimitReached } = await import('../server/worker.js');
 const { audioQualityArg, infoHashFromMagnet } = await import('../server/utils.js');
 after(() => env.cleanup());
 
@@ -62,4 +62,14 @@ test('remote path mapping', () => {
   assert.equal(mapRemotePath('/downloads', s), '/storage/downloads');
   assert.equal(mapRemotePath('/downloadsextra/x', s), '/downloadsextra/x');
   assert.equal(mapRemotePath('/downloads/music', {}), '/downloads/music');
+});
+
+test('seed limits: off at 0, either limit triggers', () => {
+  const info = { ratio: 1.5, seedingTime: 3 * 3600 };
+  assert.equal(seedLimitReached(info, { seedRatioLimit: 0, seedTimeLimitHours: 0 }), false);
+  assert.equal(seedLimitReached(info, { seedRatioLimit: 2 }), false);
+  assert.equal(seedLimitReached(info, { seedRatioLimit: 1.5 }), true);
+  assert.equal(seedLimitReached(info, { seedTimeLimitHours: 3 }), true);
+  assert.equal(seedLimitReached(info, { seedRatioLimit: 5, seedTimeLimitHours: 4 }), false);
+  assert.equal(seedLimitReached(info, { seedRatioLimit: '1' }), true, 'string values from the settings form');
 });

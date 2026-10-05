@@ -11,7 +11,6 @@
   4. Press Test Connections, request one well-seeded track, watch for: hash resolved via the `songarr-<id>` tag, file copied, torrent removed.
   5. Check Cleanuparr's Queue Cleaner leaves `songarr-*` torrents alone (it manages that qBittorrent for Sonarr/Radarr).
   6. Navidrome scan: set its URL (`http://navidrome:4533`), user and Subsonic token; confirm the scan fires and the track shows up.
-- (Jake) After import Songarr deletes the torrent and its files (`removeTorrent(hash, true)`), so it never seeds. Fine for public trackers; bad for private-tracker ratio. Make it a setting?
 - Library layout: Songarr writes `Artist/Album/NN - Title.ext`; the library convention is `music/Artist/Album (Year)/`. Add the year to the album folder.
 - SABnzbd/Transmission/Deluge paths work against the mocks only; qBittorrent is the one to prove for real.
 - (Jake) Decide where the image lives. Upstream ds needs a public image (`ghcr.io/jlesterak/songarr` in the draft, i.e. GitHub). Private alternative: build on icebox (`docker build -t songarr:local .`) and use a local ds override with that image; ds pulls will warn for it.
@@ -20,6 +19,7 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Seeding is a setting (default on): the torrent stays in the client after import and is removed with its download files at an optional ratio and/or seed-time limit (0 = seed until removed by hand). Library files are hardlinked (no extra space; copy fallback across filesystems, or `importMode: copy`); MP3s are always copied because ID3 tagging edits the file in place and would corrupt the seed. SABnzbd jobs are always removed. 7 new tests (25 total).
 - Container: multi-stage `Dockerfile` (vite build, prod deps, node:22-alpine with Alpine ffmpeg and upstream yt-dlp, updated at start unless YTDLP_AUTOUPDATE=false), PUID/PGID/TZ via `docker/entrypoint.sh` (su-exec), `/config` and `/music` volumes, healthcheck. Built and smoke-tested locally (492 MB). yt-dlp now runs with Node as its JS runtime (`--js-runtimes node:...`), which YouTube needs.
 - DockSTARTer template proposal in `dockstarter/.apps/songarr/`, following the upstream `.TEMPLATE`; validated with `docker compose config`.
 - Offline `npm test` (node:test, 18 tests): YouTube/torrent scoring, quality rules, DB init + crash recovery, torrent path end to end per client. Live Deezer/Spotify/binary checks moved to `npm run check:live`.

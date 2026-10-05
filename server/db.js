@@ -34,6 +34,14 @@ let db = {
     // the same files are mounted here.
     downloadPathRemote: '',
     downloadPathLocal: '',
+    // Seeding: keep the torrent in the client after import, removing it (and
+    // its download files) once a ratio or seed-time limit is reached; 0 = no
+    // limit, so it seeds until removed by hand. The library copy is a hardlink
+    // where possible, so it costs no extra space and survives the removal.
+    seedAfterImport: true,
+    seedRatioLimit: 0,
+    seedTimeLimitHours: 0,
+    importMode: 'hardlink', // 'hardlink' or 'copy'
     qualityRules: [] // array of { id, type, name, format, quality }
   }
 };

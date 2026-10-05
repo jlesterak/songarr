@@ -6,8 +6,9 @@ import { TEMP_DIR } from './config.js';
 
 // Fake indexers and download clients, mounted at /api/v1/mock when
 // SONGARR_MOCKS=1. They follow the real APIs closely enough to exercise the
-// torrent path end to end: each status poll advances a download by 50%, and
-// finished downloads leave real files under TEMP_DIR/mock_downloads.
+// torrent path end to end: each status poll advances a download by 50%,
+// finished downloads leave real files under TEMP_DIR/mock_downloads, and each
+// poll of a finished torrent adds 0.5 to its ratio and an hour of seed time.
 
 const router = express.Router();
 const DOWNLOAD_DIR = path.join(TEMP_DIR, 'mock_downloads');
@@ -38,6 +39,8 @@ function addMockTorrent(client, url, extra = {}) {
     trackTitle: name,
     format,
     progress: 0,
+    ratio: 0,
+    seedingTime: 0,
     client,
     tags: [],
     ...extra
@@ -46,12 +49,24 @@ function addMockTorrent(client, url, extra = {}) {
   return torrent;
 }
 
+function torrentDir(torrent) {
+  return path.join(DOWNLOAD_DIR, torrent.name.replace(/[\\/:*?"<>|]/g, '_'));
+}
+
+// Drop torrents from the mock state, deleting their files if asked to
+async function removeMockTorrents(match, deleteFiles) {
+  const removed = mockTorrents.filter(match);
+  mockTorrents = mockTorrents.filter(t => !match(t));
+  if (deleteFiles) {
+    for (const t of removed) await fs.rm(torrentDir(t), { recursive: true, force: true });
+  }
+}
+
 // Helper to create dummy audio files in the mock download directory
 async function createMockAudioFiles(torrent) {
-  const cleanName = torrent.name.replace(/[\\/:*?"<>|]/g, '_');
   const cleanTitle = torrent.trackTitle.replace(/[\\/:*?"<>|]/g, '_');
 
-  const downloadDir = path.join(DOWNLOAD_DIR, cleanName);
+  const downloadDir = torrentDir(torrent);
   await fs.mkdir(downloadDir, { recursive: true });
 
   // The wanted track, plus a second file so album mode has something to copy
@@ -60,7 +75,11 @@ async function createMockAudioFiles(torrent) {
 }
 
 async function advance(torrent) {
-  if (torrent.progress >= 100) return;
+  if (torrent.progress >= 100) {
+    torrent.ratio += 0.5;
+    torrent.seedingTime += 3600;
+    return;
+  }
   torrent.progress = Math.min(100, torrent.progress + 50);
   if (torrent.progress === 100) {
     await createMockAudioFiles(torrent);
@@ -137,7 +156,9 @@ router.get('/qbittorrent/api/v2/torrents/info', async (req, res) => {
     progress: t.progress / 100,
     state: t.progress === 100 ? 'uploading' : 'downloading',
     save_path: DOWNLOAD_DIR,
-    tags: t.tags.join(', ')
+    tags: t.tags.join(', '),
+    ratio: t.ratio,
+    seeding_time: t.seedingTime
   })));
 });
 
@@ -147,9 +168,9 @@ router.get('/qbittorrent/api/v2/torrents/files', (req, res) => {
   res.json([{ name: `${t.name}/${t.trackTitle}.${t.format}` }]);
 });
 
-router.post('/qbittorrent/api/v2/torrents/delete', express.urlencoded({ extended: true }), (req, res) => {
+router.post('/qbittorrent/api/v2/torrents/delete', express.urlencoded({ extended: true }), async (req, res) => {
   const hashes = String(req.body.hashes || '').split('|');
-  mockTorrents = mockTorrents.filter(t => !hashes.includes(t.hash));
+  await removeMockTorrents(t => hashes.includes(t.hash), req.body.deleteFiles === 'true');
   res.send('Ok.');
 });
 
@@ -180,6 +201,8 @@ router.post('/deluge/json', async (req, res) => {
         state: torrent.progress === 100 ? 'Seeding' : 'Downloading',
         save_path: DOWNLOAD_DIR,
         name: torrent.name,
+        ratio: torrent.ratio,
+        seeding_time: torrent.seedingTime,
         files: [
           { path: `${torrent.name}/${torrent.trackTitle}.${torrent.format}`, size: 10000000 }
         ]
@@ -190,7 +213,7 @@ router.post('/deluge/json', async (req, res) => {
   }
 
   if (method === 'core.remove_torrent') {
-    mockTorrents = mockTorrents.filter(t => t.hash !== params[0]);
+    await removeMockTorrents(t => t.hash === params[0], params[1] === true);
     return res.json({ result: true, error: null, id });
   }
 
@@ -229,6 +252,8 @@ router.post('/transmission/transmission/rpc', async (req, res) => {
           percentDone: t.progress / 100,
           status: t.progress === 100 ? 6 : 4,
           downloadDir: DOWNLOAD_DIR,
+          uploadRatio: t.progress === 100 ? t.ratio : -1,
+          secondsSeeding: t.seedingTime,
           files: [{ name: `${t.name}/${t.trackTitle}.${t.format}`, length: 10000000 }]
         }))
       }
@@ -237,7 +262,7 @@ router.post('/transmission/transmission/rpc', async (req, res) => {
 
   if (method === 'torrent-remove') {
     const ids = args.ids || [];
-    mockTorrents = mockTorrents.filter(t => !ids.includes(t.id) && !ids.includes(t.hash));
+    await removeMockTorrents(t => ids.includes(t.id) || ids.includes(t.hash), args['delete-local-data'] === true);
     return res.json({ result: 'success', arguments: {} });
   }
 
@@ -256,7 +281,7 @@ router.get('/sabnzbd/api', async (req, res) => {
   }
 
   if ((mode === 'queue' || mode === 'history') && name === 'delete') {
-    mockTorrents = mockTorrents.filter(t => t.hash !== value);
+    await removeMockTorrents(t => t.hash === value, req.query.del_files === '1');
     return res.json({ status: true });
   }
 
@@ -283,7 +308,7 @@ router.get('/sabnzbd/api', async (req, res) => {
           nzo_id: t.hash,
           name: t.name,
           status: 'Completed',
-          storage: path.join(DOWNLOAD_DIR, t.name.replace(/[\\/:*?"<>|]/g, '_'))
+          storage: torrentDir(t)
         }))
       }
     });

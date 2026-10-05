@@ -53,6 +53,10 @@ async function grab({ id, artist, title, indexer = 'prowlarr', client, settings 
     albumDownloadMode: 'single',
     audioFormat: 'mp3',
     qualityRules: [],
+    seedAfterImport: true,
+    seedRatioLimit: 0,
+    seedTimeLimitHours: 0,
+    importMode: 'hardlink',
     indexerType: indexer,
     prowlarrUrl: `${base}/${indexer}`,
     torrentClient: client,
@@ -63,8 +67,11 @@ async function grab({ id, artist, title, indexer = 'prowlarr', client, settings 
   return runUntilSettled(id);
 }
 
-test('Prowlarr + qBittorrent: resolves the real hash, imports and tags an MP3, removes the torrent', async () => {
-  const t = await grab({ id: 'qb1', artist: 'M83', title: 'Midnight City', client: 'qbittorrent' });
+test('Prowlarr + qBittorrent: resolves the real hash, imports and tags an MP3, removes the torrent when not seeding', async () => {
+  const t = await grab({
+    id: 'qb1', artist: 'M83', title: 'Midnight City', client: 'qbittorrent',
+    settings: { seedAfterImport: false }
+  });
   assert.equal(t.status, 'imported', t.error);
   // qBittorrent's add call returns no hash; it must be looked up, not stored as `true`
   assert.match(t.torrentHash, /^[0-9a-f]{40}$/);
@@ -73,6 +80,7 @@ test('Prowlarr + qBittorrent: resolves the real hash, imports and tags an MP3, r
 
   const res = await fetch(`${base}/qbittorrent/api/v2/torrents/info?hashes=${t.torrentHash}`);
   assert.deepEqual(await res.json(), [], 'torrent removed from client after import');
+  assert.equal(t.seeding, false);
 });
 
 test('Jackett + Deluge: artist quality rule picks FLAC and the file keeps its .flac container untouched', async () => {
@@ -124,4 +132,86 @@ test('a download the client no longer knows about reads as missing, for every cl
     const c = getDownloadClient({ torrentClient: client, torrentClientUrl: clientUrl[client]() });
     assert.equal(await c.getProgress('f'.repeat(40)), null, client);
   }
+});
+
+// Where the mocks leave a finished download's main file
+function downloadedFile(artist, title, format) {
+  const name = `${artist} - ${title}`;
+  return path.join(process.env.SONGARR_DATA_DIR, 'temp', 'mock_downloads', name, `${name}.${format}`);
+}
+
+async function qbInfo(hash) {
+  const res = await fetch(`${base}/qbittorrent/api/v2/torrents/info?hash=${hash}&hashes=${hash}`);
+  return res.json();
+}
+
+async function cycles(n) {
+  for (let i = 0; i < n; i++) await worker.processQueue();
+}
+
+const flacRule = artist => ({ qualityRules: [{ type: 'artist', name: artist, format: 'flac', quality: 'lossless' }] });
+
+test('seeding by default: FLAC is hardlinked into the library and the torrent stays in the client', async () => {
+  const t = await grab({ id: 'seed1', artist: 'Boards of Canada', title: 'Roygbiv', client: 'qbittorrent', settings: flacRule('boards of canada') });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.seeding, true);
+  const src = downloadedFile('Boards of Canada', 'Roygbiv', 'flac');
+  assert.equal(fs.statSync(t.filePath).ino, fs.statSync(src).ino, 'library file is a hardlink of the download');
+  await cycles(3);
+  assert.equal((await qbInfo(t.torrentHash)).length, 1, 'still seeding with no limits set');
+  assert.equal(db.getTrack('seed1').seeding, true);
+});
+
+test('seeding MP3s are copied, so ID3 tagging never touches the data being seeded', async () => {
+  const t = await grab({ id: 'seed2', artist: 'Bonobo', title: 'Kerala', client: 'qbittorrent' });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.seeding, true);
+  const src = downloadedFile('Bonobo', 'Kerala', 'mp3');
+  assert.notEqual(fs.statSync(t.filePath).ino, fs.statSync(src).ino);
+  assert.equal(fs.readFileSync(t.filePath).subarray(0, 3).toString(), 'ID3');
+  assert.equal(fs.readFileSync(src, 'utf-8'), 'MOCK AUDIO DATA CONTENT', 'seeded file untouched');
+});
+
+test('ratio limit: torrent and its download files are removed once reached; the hardlinked library file survives', async () => {
+  const t = await grab({
+    id: 'seed3', artist: 'Tycho', title: 'Awake', client: 'qbittorrent',
+    settings: { ...flacRule('tycho'), seedRatioLimit: 1 }
+  });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.seeding, true);
+  const src = downloadedFile('Tycho', 'Awake', 'flac');
+  assert.ok(fs.existsSync(src));
+
+  await cycles(4);
+  assert.equal(db.getTrack('seed3').seeding, false);
+  assert.deepEqual(await qbInfo(t.torrentHash), [], 'torrent removed');
+  assert.ok(!fs.existsSync(src), 'download files deleted');
+  assert.equal(fs.readFileSync(t.filePath, 'utf-8'), 'MOCK AUDIO DATA CONTENT', 'library copy intact');
+});
+
+test('seed time limit works with Transmission', async () => {
+  const t = await grab({
+    id: 'seed4', artist: 'Lemon Jelly', title: 'Nice Weather', client: 'transmission',
+    settings: { ...flacRule('lemon jelly'), seedTimeLimitHours: 2 }
+  });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.seeding, true);
+  await cycles(4);
+  assert.equal(db.getTrack('seed4').seeding, false);
+  assert.ok(fs.existsSync(t.filePath));
+});
+
+test('copy import mode never hardlinks', async () => {
+  const t = await grab({
+    id: 'seed5', artist: 'Royksopp', title: 'Eple', client: 'deluge',
+    settings: { ...flacRule('royksopp'), importMode: 'copy' }
+  });
+  assert.equal(t.status, 'imported', t.error);
+  assert.notEqual(fs.statSync(t.filePath).ino, fs.statSync(downloadedFile('Royksopp', 'Eple', 'flac')).ino);
+});
+
+test('SABnzbd jobs never count as seeding', async () => {
+  const t = await grab({ id: 'seed6', artist: 'Zero 7', title: 'Destiny', client: 'sabnzbd' });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.seeding, false);
 });

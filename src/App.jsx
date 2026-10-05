@@ -33,6 +33,10 @@ export default function App() {
     torrentClientPassword: '',
     downloadPathRemote: '',
     downloadPathLocal: '',
+    seedAfterImport: true,
+    seedRatioLimit: 0,
+    seedTimeLimitHours: 0,
+    importMode: 'hardlink',
     qualityRules: []
   });
   
@@ -1181,7 +1185,7 @@ export default function App() {
                         value={settings.albumDownloadMode}
                         onChange={e => setSettings({...settings, albumDownloadMode: e.target.value})}
                       >
-                        <option value="single">Extract Single Track (Delete rest of torrent files)</option>
+                        <option value="single">Extract Single Track (import only the requested song)</option>
                         <option value="album">Keep Entire Album (Save all torrent audio files)</option>
                       </select>
                       <span className="form-help">Controls folder behavior when snatching multi-file releases.</span>
@@ -1301,6 +1305,60 @@ export default function App() {
                             onChange={e => setSettings({...settings, downloadPathLocal: e.target.value})}
                           />
                           <span className="form-help">Only needed when the download client reports paths Songarr can't see directly (different containers or hosts).</span>
+                        </div>
+
+                        <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', gap: '1rem'}}>
+                          <input 
+                            type="checkbox" 
+                            id="seedAfterImport"
+                            checked={settings.seedAfterImport}
+                            onChange={e => setSettings({...settings, seedAfterImport: e.target.checked})}
+                            style={{width: '20px', height: '20px'}}
+                          />
+                          <div>
+                            <label className="form-label" htmlFor="seedAfterImport" style={{cursor: 'pointer'}}>Keep Seeding After Import</label>
+                            <span className="form-help" style={{display: 'block'}}>Leave the torrent in the client. Off: remove it and its download files as soon as the track is imported. (Usenet jobs are always removed.)</span>
+                          </div>
+                        </div>
+
+                        {settings.seedAfterImport && (
+                          <div className="form-group">
+                            <label className="form-label">Stop Seeding At (0 = never)</label>
+                            <div style={{display: 'flex', gap: '0.5rem'}}>
+                              <input 
+                                type="number" 
+                                min="0" 
+                                step="0.1" 
+                                className="input-text" 
+                                placeholder="Ratio"
+                                value={settings.seedRatioLimit}
+                                onChange={e => setSettings({...settings, seedRatioLimit: Number(e.target.value)})}
+                              />
+                              <input 
+                                type="number" 
+                                min="0" 
+                                step="1" 
+                                className="input-text" 
+                                placeholder="Hours"
+                                value={settings.seedTimeLimitHours}
+                                onChange={e => setSettings({...settings, seedTimeLimitHours: Number(e.target.value)})}
+                              />
+                            </div>
+                            <span className="form-help">Ratio, then hours seeded. Whichever is reached first removes the torrent and its download files; the library copy stays.</span>
+                          </div>
+                        )}
+
+                        <div className="form-group">
+                          <label className="form-label">Import Method</label>
+                          <select 
+                            className="select-custom"
+                            value={settings.importMode}
+                            onChange={e => setSettings({...settings, importMode: e.target.value})}
+                          >
+                            <option value="hardlink">Hardlink (no extra space; falls back to copy)</option>
+                            <option value="copy">Copy</option>
+                          </select>
+                          <span className="form-help">Hardlinks need the downloads and library on the same filesystem. MP3s are always copied, because tagging them would alter the data being seeded.</span>
                         </div>
 
                         <button 

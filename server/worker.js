@@ -200,6 +200,41 @@ async function tagIfMp3(filePath, track) {
   return utils.tagAudioFile(filePath, track);
 }
 
+// Put a downloaded file into the library. Hardlinks keep a seeding torrent's
+// data intact without using extra space, but share the inode: any file we are
+// about to edit (MP3s get ID3 tags written in place) must be a real copy, or
+// the edit would corrupt the torrent's data. Cross-filesystem links fall back
+// to a copy.
+export async function linkOrCopy(src, dest, settings, { willModify = false } = {}) {
+  await fs.rm(dest, { force: true });
+  if (settings.importMode !== 'copy' && !willModify) {
+    try {
+      await fs.link(src, dest);
+      return 'hardlink';
+    } catch (err) {
+      if (!['EXDEV', 'EPERM', 'EMLINK', 'ENOTSUP'].includes(err.code)) throw err;
+      console.log(`[Worker] Hardlink not possible (${err.code}), copying instead: ${dest}`);
+    }
+  }
+  await fs.copyFile(src, dest);
+  return 'copy';
+}
+
+// Has a seeding torrent reached its ratio or seed-time limit? No limits set
+// means it seeds until someone removes it.
+export function seedLimitReached(info, settings) {
+  const ratioLimit = Number(settings.seedRatioLimit) || 0;
+  const hoursLimit = Number(settings.seedTimeLimitHours) || 0;
+  if (ratioLimit > 0 && (info.ratio || 0) >= ratioLimit) return true;
+  if (hoursLimit > 0 && (info.seedingTime || 0) >= hoursLimit * 3600) return true;
+  return false;
+}
+
+// Usenet has nothing to seed; everything else seeds if the setting is on.
+function keepsSeeding(settings) {
+  return settings.seedAfterImport !== false && settings.torrentClient !== 'sabnzbd';
+}
+
 // Find all audio files recursively
 async function findAudioFiles(dir) {
   let results = [];
@@ -249,11 +284,33 @@ async function scoreAudioFile(filePath, track) {
 async function pollActiveDownloads(settings) {
   const tracks = db.getTracks();
   const activeTracks = tracks.filter(t => ['snatched', 'downloading'].includes(t.status) && t.torrentHash);
+  // Seeding torrents only need checking when there is a limit to enforce
+  const hasSeedLimit = Number(settings.seedRatioLimit) > 0 || Number(settings.seedTimeLimitHours) > 0;
+  const seedingTracks = hasSeedLimit ? tracks.filter(t => t.status === 'imported' && t.seeding && t.torrentHash) : [];
+  
+  if (activeTracks.length === 0 && seedingTracks.length === 0) return;
+  
+  const client = utils.getDownloadClient(settings);
+  
+  for (const track of seedingTracks) {
+    try {
+      const info = await client.getProgress(track.torrentHash);
+      if (!info) {
+        console.log(`[Worker] Seeding torrent for "${track.title}" is gone from the client.`);
+        await db.updateTrack(track.id, { seeding: false });
+      } else if (seedLimitReached(info, settings)) {
+        console.log(`[Worker] "${track.title}" reached its seed limit (ratio ${info.ratio}, ${Math.round(info.seedingTime / 3600)}h). Removing torrent and its download files...`);
+        await client.removeTorrent(track.torrentHash, true);
+        await db.updateTrack(track.id, { seeding: false });
+      }
+    } catch (err) {
+      // Leave it seeding and try again next cycle
+      console.error(`[Worker] Failed to check seeding torrent for "${track.title}":`, err.message);
+    }
+  }
   
   if (activeTracks.length === 0) return;
-  
   console.log(`[Worker] Polling progress for ${activeTracks.length} active torrent downloads...`);
-  const client = utils.getDownloadClient(settings);
   
   for (const track of activeTracks) {
     try {
@@ -308,25 +365,30 @@ async function pollActiveDownloads(settings) {
         const destFile = path.join(targetAlbumDir, `${trackNum} - ${sanitizeFilename(track.title)}${ext}`);
         await fs.mkdir(targetAlbumDir, { recursive: true });
         
+        // MP3s get tagged below, so they must be copies, not links
+        const willModify = ext === '.mp3';
         if (settings.albumDownloadMode === 'single') {
           console.log(`[Worker] Selected single track file: "${bestFile}" with score ${scoredFiles[0].score}`);
-          await fs.copyFile(bestFile, destFile);
+          await linkOrCopy(bestFile, destFile, settings, { willModify });
         } else {
-          console.log(`[Worker] Album mode: copying all ${audioFiles.length} audio files to album folder...`);
+          console.log(`[Worker] Album mode: importing all ${audioFiles.length} audio files to album folder...`);
           for (const file of audioFiles) {
-            const target = file === bestFile ? destFile : path.join(targetAlbumDir, sanitizeFilename(path.basename(file)));
-            await fs.copyFile(file, target);
+            const isBest = file === bestFile;
+            const target = isBest ? destFile : path.join(targetAlbumDir, sanitizeFilename(path.basename(file)));
+            await linkOrCopy(file, target, settings, { willModify: isBest && willModify });
           }
         }
         
         console.log(`[Worker] Tagging file: ${destFile}`);
         const tagged = await tagIfMp3(destFile, track);
         
+        const seeding = keepsSeeding(settings);
         await db.updateTrack(track.id, {
           status: 'imported',
           filePath: destFile,
           bitrate: quality,
           format: ext.slice(1),
+          seeding,
           error: tagged ? null : 'Tagging failed, but audio downloaded'
         });
         
@@ -339,8 +401,12 @@ async function pollActiveDownloads(settings) {
           }
         }
         
-        console.log(`[Worker] Removing torrent ${track.torrentHash} from client and cleaning up download files...`);
-        await client.removeTorrent(track.torrentHash, true);
+        if (seeding) {
+          console.log(`[Worker] Leaving torrent ${track.torrentHash} seeding.`);
+        } else {
+          console.log(`[Worker] Removing torrent ${track.torrentHash} from client and cleaning up download files...`);
+          await client.removeTorrent(track.torrentHash, true);
+        }
       }
     } catch (err) {
       console.error(`[Worker] Failed to process active torrent download for "${track.title}":`, err.message);

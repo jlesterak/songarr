@@ -558,10 +558,12 @@ export function getDownloadClient(settings) {
 
         return {
           progress: Math.round(torrent.progress * 100),
-          isFinished: torrent.progress === 1 || ['uploading', 'pausedUP', 'stalledUP', 'checkingUP'].includes(torrent.state),
+          isFinished: torrent.progress === 1 || ['uploading', 'pausedUP', 'stoppedUP', 'stalledUP', 'checkingUP', 'forcedUP', 'queuedUP'].includes(torrent.state),
           savePath: torrent.save_path,
           name: torrent.name,
-          files
+          files,
+          ratio: torrent.ratio || 0,
+          seedingTime: torrent.seeding_time || 0 // seconds
         };
       }
       
@@ -571,7 +573,7 @@ export function getDownloadClient(settings) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             method: 'core.get_torrent_status',
-            params: [hash, ['progress', 'state', 'save_path', 'files', 'name']],
+            params: [hash, ['progress', 'state', 'save_path', 'files', 'name', 'ratio', 'seeding_time']],
             id: 3
           })
         });
@@ -585,7 +587,9 @@ export function getDownloadClient(settings) {
           isFinished: torrent.progress === 100 || ['Seeding', 'Paused'].includes(torrent.state),
           savePath: torrent.save_path,
           name: torrent.name,
-          files: torrent.files ? torrent.files.map(f => f.path) : []
+          files: torrent.files ? torrent.files.map(f => f.path) : [],
+          ratio: torrent.ratio || 0,
+          seedingTime: torrent.seeding_time || 0
         };
       }
       
@@ -597,7 +601,7 @@ export function getDownloadClient(settings) {
             method: 'torrent-get',
             arguments: {
               ids: [hash],
-              fields: ['id', 'hashString', 'name', 'percentDone', 'status', 'files', 'downloadDir']
+              fields: ['id', 'hashString', 'name', 'percentDone', 'status', 'files', 'downloadDir', 'uploadRatio', 'secondsSeeding']
             }
           })
         });
@@ -612,7 +616,10 @@ export function getDownloadClient(settings) {
           isFinished: torrent.percentDone === 1 || torrent.status === 6,
           savePath: torrent.downloadDir,
           name: torrent.name,
-          files: torrent.files ? torrent.files.map(f => f.name) : []
+          files: torrent.files ? torrent.files.map(f => f.name) : [],
+          // Transmission reports -1 (no ratio yet) and -2 (infinite)
+          ratio: torrent.uploadRatio > 0 ? torrent.uploadRatio : 0,
+          seedingTime: torrent.secondsSeeding || 0
         };
       }
       
