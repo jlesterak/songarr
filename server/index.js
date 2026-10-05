@@ -5,14 +5,20 @@ import fs from 'fs/promises';
 import * as db from './db.js';
 import * as utils from './utils.js';
 import * as worker from './worker.js';
-import mockRouter from './mocks.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
-app.use('/api/v1/mock', mockRouter);
+
+// Fake Prowlarr/Jackett and download-client endpoints for development and tests.
+// Off unless SONGARR_MOCKS=1, so a real install never exposes them.
+if (process.env.SONGARR_MOCKS === '1') {
+  const { default: mockRouter } = await import('./mocks.js');
+  app.use('/api/v1/mock', mockRouter);
+  console.log('[Songarr Server] Mock indexer/client endpoints enabled at /api/v1/mock');
+}
 
 // Initialize Database & Worker
 await db.init();
