@@ -36,6 +36,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY server ./server
+COPY scripts ./scripts
 COPY docker/entrypoint.sh /entrypoint.sh
 
 ENV NODE_ENV=production \

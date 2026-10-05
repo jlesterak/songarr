@@ -84,7 +84,7 @@ docker run -d --name songarr -p 3001:3001 \
   -v /path/to/appdata/songarr:/config -v /path/to/music:/music songarr
 ```
 
-The image bundles ffmpeg and yt-dlp (updated at each start; `-e YTDLP_AUTOUPDATE=false` to skip). A DockSTARTer template proposal is in `dockstarter/`.
+The image bundles ffmpeg and yt-dlp (updated at each start; `-e YTDLP_AUTOUPDATE=false` to skip). A DockSTARTer template proposal is in `dockstarter/`. To check the bundled tools and the outside services from inside a running container: `docker exec songarr npm run check:live`.
 
 ---
 
