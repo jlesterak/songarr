@@ -1,7 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { DATA_DIR, MUSIC_DIR } from './config.js';
 
-const DB_DIR = path.resolve('data');
+const DB_DIR = DATA_DIR;
 const DB_FILE = path.join(DB_DIR, 'db.json');
 
 // Memory cache for fast reads
@@ -9,7 +10,7 @@ let db = {
   tracks: [],
   playlists: [],
   settings: {
-    libraryPath: path.resolve('music'),
+    libraryPath: MUSIC_DIR,
     autoDownload: true,
     downloadInterval: 5, // minutes
     audioFormat: 'mp3',
@@ -28,6 +29,11 @@ let db = {
     torrentClientUrl: 'http://localhost:8080',
     torrentClientUsername: '',
     torrentClientPassword: '',
+    // Remote path mapping, like the *arrs: the client reports its own save path
+    // (e.g. /downloads in its container); Songarr rewrites that prefix to where
+    // the same files are mounted here.
+    downloadPathRemote: '',
+    downloadPathLocal: '',
     qualityRules: [] // array of { id, type, name, format, quality }
   }
 };

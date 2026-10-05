@@ -77,10 +77,18 @@ pm2 start server/index.js --name songarr
 
 ## Database & Storage Paths
 
-All files are structured locally inside the workspace:
-- **Database**: `./data/db.json` (Atomic JSON-file store. No external DB servers needed).
-- **Music Library**: `./music/` (Default path. Can be changed to `/mnt/music` or `/media/music` in Settings UI).
-- **Playlists**: `./music/Playlists/` (M3U files).
+Defaults are relative to the working directory; each can be moved with an environment variable:
+
+| What | Default | Override |
+|---|---|---|
+| Database (`db.json`, atomic JSON store) | `./data/` | `SONGARR_DATA_DIR` |
+| Music library (default for the Library Path setting) | `./music/` | `SONGARR_MUSIC_DIR` |
+| Download/convert scratch space | `<data>/temp/` | `SONGARR_TEMP_DIR` |
+| yt-dlp / ffmpeg / ffprobe | `./bin/` if present, else `PATH` | `SONGARR_BIN_DIR` |
+
+Playlists are written to `<library>/Playlists/` as M3U files.
+
+`SONGARR_MOCKS=1` mounts fake Prowlarr/Jackett/qBittorrent/Deluge/Transmission/SABnzbd endpoints at `/api/v1/mock` for development. Leave it unset in real installs.
 
 ---
 
@@ -104,15 +112,12 @@ graph TD
 
 ---
 
-## Git & GitHub Integration
-
-This repository has been initialized with git. To publish to your GitHub:
-
-1. Create a new, blank repository on your GitHub account.
-2. Link your local project directory and push:
+## Testing
 
 ```bash
-git remote add origin <your-github-repo-url>
-git branch -M main
-git push -u origin main
+npm test             # offline: scoring, database, and the torrent path end to end against the mocks
+npm run check:live   # needs internet: yt-dlp/ffmpeg runnable, Deezer search, Spotify embed scraper
 ```
+
+`npm test` never touches the network: it uses a throwaway data directory and stub yt-dlp/ffmpeg binaries that always fail.
+Set `SONGARR_TEST_VERBOSE=1` to see server logs.

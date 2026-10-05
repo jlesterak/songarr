@@ -31,6 +31,8 @@ export default function App() {
     torrentClientUrl: '',
     torrentClientUsername: '',
     torrentClientPassword: '',
+    downloadPathRemote: '',
+    downloadPathLocal: '',
     qualityRules: []
   });
   
@@ -1279,6 +1281,26 @@ export default function App() {
                             onChange={e => setSettings({...settings, torrentClientPassword: e.target.value})}
                           />
                           <span className="form-help">Enter the password or api key of your selected downloader client.</span>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label">Remote Path Mapping (optional)</label>
+                          <input 
+                            type="text" 
+                            className="input-text" 
+                            placeholder="Client path, e.g. /downloads"
+                            value={settings.downloadPathRemote}
+                            onChange={e => setSettings({...settings, downloadPathRemote: e.target.value})}
+                          />
+                          <input 
+                            type="text" 
+                            className="input-text" 
+                            style={{marginTop: '0.5rem'}}
+                            placeholder="Same folder as Songarr sees it, e.g. /storage/downloads"
+                            value={settings.downloadPathLocal}
+                            onChange={e => setSettings({...settings, downloadPathLocal: e.target.value})}
+                          />
+                          <span className="form-help">Only needed when the download client reports paths Songarr can't see directly (different containers or hosts).</span>
                         </div>
 
                         <button 

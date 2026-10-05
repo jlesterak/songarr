@@ -180,6 +180,26 @@ export function scoreTorrentCandidate(torrent, track, targetFormat) {
   return score;
 }
 
+// Rewrite a download client's save path into the path Songarr sees.
+export function mapRemotePath(remote, settings) {
+  const from = (settings.downloadPathRemote || '').replace(/\/+$/, '');
+  const to = (settings.downloadPathLocal || '').replace(/\/+$/, '');
+  if (!from || !to || !remote) return remote;
+  if (remote === from) return to;
+  if (remote.startsWith(from + '/')) return to + remote.slice(from.length);
+  return remote;
+}
+
+// node-id3 only understands MP3; writing an ID3 header into FLAC/M4A/OGG
+// corrupts them, and files from torrents usually arrive tagged anyway.
+async function tagIfMp3(filePath, track) {
+  if (path.extname(filePath).toLowerCase() !== '.mp3') {
+    console.log(`[Worker] Not an MP3, keeping existing tags: ${filePath}`);
+    return true;
+  }
+  return utils.tagAudioFile(filePath, track);
+}
+
 // Find all audio files recursively
 async function findAudioFiles(dir) {
   let results = [];
@@ -254,83 +274,68 @@ async function pollActiveDownloads(settings) {
         console.log(`[Worker] Torrent finished for track: "${track.title}". Starting post-processing...`);
         await db.updateTrack(track.id, { status: 'downloaded' });
         
-        const format = track.targetFormat || settings.audioFormat || 'mp3';
         const quality = track.targetQuality || settings.audioQuality || '320k';
         const artistDir = sanitizeFilename(track.artists[0]);
         const albumDir = sanitizeFilename(track.album);
+        const targetAlbumDir = path.join(settings.libraryPath, artistDir, albumDir);
         const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
-        const finalFileBase = `${trackNum} - ${sanitizeFilename(track.title)}.${format}`;
-        const destFile = path.join(settings.libraryPath, artistDir, albumDir, finalFileBase);
         
-        let success = false;
-        
-        if (progressInfo.savePath) {
-          let sourceDir = progressInfo.savePath;
-          if (progressInfo.name) {
-            sourceDir = path.join(progressInfo.savePath, progressInfo.name);
-          }
-          
-          const dirExists = await fs.stat(sourceDir).then(s => s.isDirectory()).catch(() => false);
-          if (!dirExists) {
-            sourceDir = progressInfo.savePath;
-          }
-          
-          console.log(`[Worker] Scanning download directory for audio files: ${sourceDir}`);
-          const audioFiles = await findAudioFiles(sourceDir);
-          
-          if (audioFiles.length === 0) {
-            throw new Error(`No audio files found in downloaded torrent path: ${sourceDir}`);
-          }
-          
-          if (settings.albumDownloadMode === 'single') {
-            const scoredFiles = [];
-            for (const file of audioFiles) {
-              const score = await scoreAudioFile(file, track);
-              scoredFiles.push({ file, score });
-            }
-            scoredFiles.sort((a, b) => b.score - a.score);
-            const bestFile = scoredFiles[0].file;
-            
-            console.log(`[Worker] Selected single track file: "${bestFile}" with score ${scoredFiles[0].score}`);
-            await fs.mkdir(path.dirname(destFile), { recursive: true });
-            await fs.copyFile(bestFile, destFile);
-            success = true;
-          } else {
-            console.log(`[Worker] Album mode: copying all ${audioFiles.length} audio files to album folder...`);
-            const targetAlbumDir = path.join(settings.libraryPath, artistDir, albumDir);
-            await fs.mkdir(targetAlbumDir, { recursive: true });
-            
-            for (const file of audioFiles) {
-              const baseName = path.basename(file);
-              const cleanBaseName = baseName.replace(/[\\/:*?"<>|]/g, '_');
-              const targetPath = path.join(targetAlbumDir, cleanBaseName);
-              await fs.copyFile(file, targetPath);
-            }
-            success = true;
-          }
-        } else {
+        if (!progressInfo.savePath) {
           throw new Error('No download save path returned by client');
         }
+        const savePath = mapRemotePath(progressInfo.savePath, settings);
+        let sourceDir = progressInfo.name ? path.join(savePath, progressInfo.name) : savePath;
+        const dirExists = await fs.stat(sourceDir).then(s => s.isDirectory()).catch(() => false);
+        if (!dirExists) {
+          sourceDir = savePath;
+        }
         
-        if (success) {
-          console.log(`[Worker] Tagging file: ${destFile}`);
-          const tagged = await utils.tagAudioFile(destFile, track);
-          
-          await db.updateTrack(track.id, {
-            status: 'imported',
-            filePath: destFile,
-            bitrate: quality,
-            format: format,
-            error: tagged ? null : 'Tagging failed, but audio downloaded'
-          });
-          
-          console.log(`[Worker] Successfully imported: ${destFile}`);
-          
-          const playlists = db.getPlaylists();
-          for (const pl of playlists) {
-            if (pl.trackIds.includes(track.id)) {
-              await regenerateM3UPlaylist(pl);
-            }
+        console.log(`[Worker] Scanning download directory for audio files: ${sourceDir}`);
+        const audioFiles = await findAudioFiles(sourceDir);
+        if (audioFiles.length === 0) {
+          throw new Error(`No audio files found in downloaded torrent path: ${sourceDir}`);
+        }
+        
+        const scoredFiles = [];
+        for (const file of audioFiles) {
+          scoredFiles.push({ file, score: await scoreAudioFile(file, track) });
+        }
+        scoredFiles.sort((a, b) => b.score - a.score);
+        const bestFile = scoredFiles[0].file;
+        // Keep the file's real container: a FLAC renamed to .mp3 plays badly
+        // and then gets an ID3 header written into it.
+        const ext = path.extname(bestFile).toLowerCase();
+        const destFile = path.join(targetAlbumDir, `${trackNum} - ${sanitizeFilename(track.title)}${ext}`);
+        await fs.mkdir(targetAlbumDir, { recursive: true });
+        
+        if (settings.albumDownloadMode === 'single') {
+          console.log(`[Worker] Selected single track file: "${bestFile}" with score ${scoredFiles[0].score}`);
+          await fs.copyFile(bestFile, destFile);
+        } else {
+          console.log(`[Worker] Album mode: copying all ${audioFiles.length} audio files to album folder...`);
+          for (const file of audioFiles) {
+            const target = file === bestFile ? destFile : path.join(targetAlbumDir, sanitizeFilename(path.basename(file)));
+            await fs.copyFile(file, target);
+          }
+        }
+        
+        console.log(`[Worker] Tagging file: ${destFile}`);
+        const tagged = await tagIfMp3(destFile, track);
+        
+        await db.updateTrack(track.id, {
+          status: 'imported',
+          filePath: destFile,
+          bitrate: quality,
+          format: ext.slice(1),
+          error: tagged ? null : 'Tagging failed, but audio downloaded'
+        });
+        
+        console.log(`[Worker] Successfully imported: ${destFile}`);
+        
+        const playlists = db.getPlaylists();
+        for (const pl of playlists) {
+          if (pl.trackIds.includes(track.id)) {
+            await regenerateM3UPlaylist(pl);
           }
         }
         
@@ -482,9 +487,15 @@ export async function processQueue() {
             const client = utils.getDownloadClient(settings);
             console.log(`[Worker] Snatched torrent: "${best.candidate.title}" via ${settings.torrentClient}`);
             
-            const hash = await client.addTorrent(best.candidate.downloadUrl);
+            const hash = await client.addTorrent(best.candidate.downloadUrl, {
+              infoHash: best.candidate.infoHash,
+              tag: `songarr-${track.id}`
+            });
+            if (!hash) {
+              throw new Error(`${settings.torrentClient} did not return an id for the added download`);
+            }
             await db.updateTrack(track.id, {
-              torrentHash: hash || best.candidate.guid || 'mock_hash_' + Math.random().toString(36).substr(2, 9),
+              torrentHash: hash,
               torrentName: best.candidate.title
             });
           } catch (err) {

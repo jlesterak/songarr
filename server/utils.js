@@ -3,12 +3,13 @@ import path from 'path';
 import fs from 'fs/promises';
 import { promisify } from 'util';
 import nodeID3 from 'node-id3';
+import { binary, TEMP_DIR } from './config.js';
 
 const execFileAsync = promisify(execFile);
 
-const YTDLP_PATH = path.resolve('bin/yt-dlp');
-const FFMPEG_PATH = path.resolve('bin/ffmpeg');
-const FFPROBE_PATH = path.resolve('bin/ffprobe');
+const YTDLP_PATH = binary('yt-dlp');
+const FFMPEG_PATH = binary('ffmpeg');
+const FFPROBE_PATH = binary('ffprobe');
 
 export async function getFileDuration(filePath) {
   try {
@@ -176,7 +177,7 @@ export async function searchYouTube(query, limit = 5) {
     const args = [
       `ytsearch${limit}:${query}`,
       '--dump-json',
-      '--ffmpeg-location', FFMPEG_PATH,
+      ...ffmpegLocationArgs(),
       '--no-playlist'
     ];
     
@@ -204,9 +205,20 @@ export async function searchYouTube(query, limit = 5) {
   }
 }
 
+function ffmpegLocationArgs() {
+  return path.isAbsolute(FFMPEG_PATH) ? ['--ffmpeg-location', FFMPEG_PATH] : [];
+}
+
+// yt-dlp takes either a VBR level (0 best .. 10 worst) or a bitrate with a K
+// suffix. '320k' -> '320K'; anything else falls back to best VBR.
+export function audioQualityArg(quality) {
+  const m = /^(\d+)k$/i.exec(String(quality || ''));
+  return m ? `${m[1]}K` : '0';
+}
+
 // Perform download and extract audio
 export async function downloadTrackAudio(youtubeUrl, outputFile, format = 'mp3', quality = '320k') {
-  const tempDir = path.resolve('temp');
+  const tempDir = TEMP_DIR;
   await fs.mkdir(tempDir, { recursive: true });
   
   const tempOutBase = path.join(tempDir, `download_${Date.now()}`);
@@ -216,15 +228,11 @@ export async function downloadTrackAudio(youtubeUrl, outputFile, format = 'mp3',
     youtubeUrl,
     '--extract-audio',
     '--audio-format', format,
-    '--audio-quality', quality === '320k' ? '0' : '5', // yt-dlp maps 0=best, 9=worst for VBR, or we can use specific bitrates
+    '--audio-quality', audioQualityArg(quality),
     '--output', `${tempOutBase}.%(ext)s`,
-    '--ffmpeg-location', FFMPEG_PATH,
+    ...ffmpegLocationArgs(),
     '--no-playlist'
   ];
-  
-  if (format === 'mp3') {
-    args.push('--audio-quality', quality.replace('k', ''));
-  }
 
   try {
     await execFileAsync(YTDLP_PATH, args);
@@ -336,6 +344,7 @@ export async function searchIndexer(query, settings) {
         title: item.title,
         downloadUrl: item.downloadUrl,
         guid: item.guid || item.infoHash || '',
+        infoHash: item.infoHash || '',
         size: item.size || 0,
         seeders: item.seeders || 0,
         peers: item.peers || 0,
@@ -353,6 +362,7 @@ export async function searchIndexer(query, settings) {
         title: item.Title,
         downloadUrl: item.Link,
         guid: item.Guid || '',
+        infoHash: item.InfoHash || '',
         size: item.Size || 0,
         seeders: item.Seeders || 0,
         peers: item.Peers || 0,
@@ -417,6 +427,12 @@ class ClientSession {
   }
 }
 
+// 40-hex btih from a magnet link; base32 hashes are left to the tag lookup.
+export function infoHashFromMagnet(url) {
+  const m = /^magnet:.*[?&]xt=urn:btih:([0-9a-f]{40})(?:&|$)/i.exec(String(url || ''));
+  return m ? m[1] : '';
+}
+
 export function getDownloadClient(settings) {
   const clientType = settings.torrentClient || 'qbittorrent';
   const url = settings.torrentClientUrl ? settings.torrentClientUrl.replace(/\/$/, '') : '';
@@ -430,7 +446,10 @@ export function getDownloadClient(settings) {
   const session = sessions.get(sessionKey);
 
   return {
-    async addTorrent(downloadUrl) {
+    // Returns the client's id for the download (info hash, or NZB job id).
+    // opts.infoHash: hash the indexer reported, if any. opts.tag: unique label
+    // used to find the torrent again when the hash isn't known up front.
+    async addTorrent(downloadUrl, opts = {}) {
       if (clientType === 'qbittorrent') {
         await session.request('/api/v2/auth/login', {
           method: 'POST',
@@ -438,13 +457,27 @@ export function getDownloadClient(settings) {
           body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
         });
         
+        const tag = opts.tag || `songarr-${Date.now()}`;
         const addRes = await session.request('/api/v2/torrents/add', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `urls=${encodeURIComponent(downloadUrl)}`
+          body: `urls=${encodeURIComponent(downloadUrl)}&tags=${encodeURIComponent(tag)}`
         });
         if (!addRes.ok) throw new Error(`qBittorrent add failed: ${addRes.status}`);
-        return true;
+
+        // qBittorrent's add call doesn't return the hash, and adds from a URL
+        // finish asynchronously, so look the torrent up by its tag.
+        const known = opts.infoHash || infoHashFromMagnet(downloadUrl);
+        if (known) return known.toLowerCase();
+        for (let i = 0; i < (opts.lookupAttempts ?? 20); i++) {
+          const infoRes = await session.request(`/api/v2/torrents/info?tag=${encodeURIComponent(tag)}`);
+          if (infoRes.ok) {
+            const list = await infoRes.json();
+            if (list.length > 0) return list[0].hash;
+          }
+          await new Promise(r => setTimeout(r, opts.lookupDelayMs ?? 500));
+        }
+        throw new Error(`qBittorrent accepted the torrent but it never appeared under tag "${tag}"`);
       }
       
       if (clientType === 'deluge') {
@@ -538,7 +571,8 @@ export function getDownloadClient(settings) {
           })
         });
         const statusJson = await statusRes.json();
-        if (statusJson.error || !statusJson.result) return null;
+        // Deluge answers an unknown hash with an empty dict, not an error
+        if (statusJson.error || !statusJson.result || Object.keys(statusJson.result).length === 0) return null;
         
         const torrent = statusJson.result;
         return {
