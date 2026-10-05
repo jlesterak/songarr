@@ -431,6 +431,7 @@ async function pollActiveDownloads(settings) {
         const seeding = keepsSeeding(settings);
         await db.updateTrack(track.id, {
           status: 'imported',
+          source: 'torrent',
           filePath: destFile,
           bitrate: quality,
           format: ext.slice(1),
@@ -515,6 +516,10 @@ async function downloadDirectFromYouTube(track, settings, format, quality) {
     
     await db.updateTrack(track.id, {
       status: 'imported',
+      source: 'youtube',
+      torrentHash: null,
+      torrentName: null,
+      seeding: false,
       filePath: destFile,
       bitrate: actualQuality,
       format: actualFormat,

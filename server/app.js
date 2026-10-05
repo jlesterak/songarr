@@ -9,6 +9,44 @@ import { DIST_DIR } from './config.js';
 
 // Builds the Express app. Callers must `await db.init()` first; starting the
 // worker and listening are left to server/index.js (and to tests).
+const AUDIO_EXT = /\.(mp3|m4a|flac|opus|ogg|wav|aac)$/i;
+const SIZE_TTL_MS = 30 * 60 * 1000;
+const sizeCache = { dir: null, text: 'Calculating…', at: 0, running: false };
+
+async function dirAudioBytes(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) total += await dirAudioBytes(p);
+    else if (e.isFile() && AUDIO_EXT.test(e.name)) {
+      try { total += (await fs.stat(p)).size; } catch { /* vanished */ }
+    }
+  }
+  return total;
+}
+
+function formatBytes(n) {
+  return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
+}
+
+// Cached library size; refreshes in the background when stale, never blocks.
+export function librarySize(dir) {
+  if (sizeCache.dir !== dir) Object.assign(sizeCache, { dir, text: 'Calculating…', at: 0 });
+  if (!sizeCache.running && Date.now() - sizeCache.at > SIZE_TTL_MS) {
+    sizeCache.running = true;
+    dirAudioBytes(dir)
+      .then(bytes => { if (sizeCache.dir === dir) Object.assign(sizeCache, { text: formatBytes(bytes), at: Date.now() }); })
+      .finally(() => { sizeCache.running = false; });
+  }
+  return sizeCache.text;
+}
+
 export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = {}) {
   const app = express();
 
@@ -303,6 +341,9 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
   });
 
   // 12. Status endpoint
+  // Liveness for the container healthcheck: no disk or network work.
+  app.get('/api/v1/health', (req, res) => res.json({ ok: true }));
+
   app.get('/api/v1/status', async (req, res) => {
     try {
       const tracks = db.getTracks();
@@ -319,29 +360,9 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
         librarySize: '0 MB'
       };
 
-      // Calculate library disk space
-      try {
-        let sizeBytes = 0;
-        async function walkDir(dir) {
-          try {
-            const files = await fs.readdir(dir, { withFileTypes: true });
-            for (const file of files) {
-              const p = path.join(dir, file.name);
-              if (file.isDirectory()) {
-                await walkDir(p);
-              } else if (file.isFile() && (file.name.endsWith('.mp3') || file.name.endsWith('.m4a'))) {
-                const stat = await fs.stat(p);
-                sizeBytes += stat.size;
-              }
-            }
-          } catch (e) {}
-        }
-      
-        await walkDir(settings.libraryPath);
-        stats.librarySize = (sizeBytes / (1024 * 1024)).toFixed(1) + ' MB';
-      } catch (e) {
-        stats.librarySize = 'Unknown';
-      }
+      // Walking the library is slow on a big NFS share (69 s for ~1,750
+      // artists on icebox), so it runs in the background and is cached.
+      stats.librarySize = librarySize(settings.libraryPath);
 
       res.json(stats);
     } catch (err) {

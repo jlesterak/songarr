@@ -52,7 +52,7 @@ ENV NODE_ENV=production \
 VOLUME ["/config", "/music"]
 EXPOSE 3001
 HEALTHCHECK --interval=60s --timeout=5s --start-period=30s \
-  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/v1/status" || exit 1
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/v1/health" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "server/index.js"]

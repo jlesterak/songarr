@@ -25,6 +25,8 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Container healthcheck hits a new `/api/v1/health`; `/api/v1/status` no longer walks the library per request (69 s over NFS on icebox, so the container showed unhealthy and every UI refresh crawled nicebox). Library size is cached and refreshed in the background every 30 min, and counts FLAC/Opus/OGG/WAV/AAC too. Imports record `source` (torrent/youtube); a YouTube import clears torrent fields left from stalled attempts. 35 tests.
+- Stall fallback proven live on icebox: Avicii "Wake Me Up", 3 dead torrents dropped in turn, then YouTube imported the right cut (244 s, 320k) to `Avicii/True (2013)/`.
 - Polling: an unreachable client (VPN reconnect) no longer marks the track failed; it retries next cycle (Avicii test on icebox failed on one "fetch failed"). 34 tests.
 - Crash recovery keeps tracks whose download the client already holds (has a hash): polling resumes, an interrupted import (`downloaded`) is re-polled. It used to reset them to wanted, which re-grabbed a duplicate qBit rejects and orphaned the original (seen on icebox after a redeploy). 33 tests.
 - First real run on icebox (2026-10-05): ds override + `songarr:local` built from the icebox repo, Prowlarr + qbittorrentvpn connected; YouTube path imported Pharrell "Happy" to `music/Pharrell Williams/G I R L (2014)/05 - ...mp3` (320 kbps, tagged, jake-owned). Cleanuparr leaves Songarr torrents alone (Download Cleaner off; Queue Cleaner / malware blocker only touch Sonarr/Radarr queue items).
