@@ -78,14 +78,23 @@ export async function init() {
     await save();
   }
 
-  // Crash recovery: reset stuck status items back to wanted
+  // Crash recovery. A download the client already holds (it has a hash) keeps
+  // going: polling resumes, and an interrupted import re-runs once polling sees
+  // it finished. Re-queuing it instead would grab a duplicate the client
+  // rejects. Anything interrupted before reaching a client goes back to wanted.
   let recovered = false;
   db.tracks.forEach(track => {
-    if (['snatched', 'downloading', 'downloaded'].includes(track.status)) {
-      track.status = 'wanted';
-      track.error = null;
-      recovered = true;
+    if (!['snatched', 'downloading', 'downloaded'].includes(track.status)) return;
+    if (track.torrentHash) {
+      if (track.status === 'downloaded') {
+        track.status = 'downloading';
+        recovered = true;
+      }
+      return;
     }
+    track.status = 'wanted';
+    track.error = null;
+    recovered = true;
   });
   if (recovered) {
     console.log('[DB] Recovered pending tracks back to "wanted" status.');

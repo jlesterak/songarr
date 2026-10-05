@@ -13,7 +13,9 @@ fs.mkdirSync(dataDir, { recursive: true });
 fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({
   tracks: [
     { id: 'a', title: 'Stuck', artists: ['X'], status: 'downloading' },
-    { id: 'b', title: 'Done', artists: ['X'], status: 'imported' }
+    { id: 'b', title: 'Done', artists: ['X'], status: 'imported' },
+    { id: 'h1', title: 'In client', artists: ['X'], status: 'snatched', torrentHash: 'abc' },
+    { id: 'h2', title: 'Import cut off', artists: ['X'], status: 'downloaded', torrentHash: 'def' }
   ],
   playlists: [],
   settings: { audioFormat: 'm4a' }
@@ -36,6 +38,12 @@ test('init keeps stored settings and fills new defaults', () => {
 test('init resets interrupted downloads to wanted, leaves imported alone', () => {
   assert.equal(db.getTrack('a').status, 'wanted');
   assert.equal(db.getTrack('b').status, 'imported');
+});
+
+test('init keeps downloads the client already has, and re-polls an interrupted import', () => {
+  assert.equal(db.getTrack('h1').status, 'snatched');
+  assert.equal(db.getTrack('h1').torrentHash, 'abc');
+  assert.equal(db.getTrack('h2').status, 'downloading');
   const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf-8'));
   assert.equal(onDisk.tracks.find(t => t.id === 'a').status, 'wanted');
 });
