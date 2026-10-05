@@ -128,7 +128,7 @@ export async function addTrack(trackData) {
   const existing = db.tracks.find(t => t.id === trackData.id);
   if (existing) {
     // If it failed previously, reset to wanted
-    if (existing.status === 'failed') {
+    if (existing.status === 'failed' || existing.status === 'none') {
       existing.status = 'wanted';
       existing.error = null;
       existing.createdAt = new Date().toISOString();
@@ -138,6 +138,9 @@ export async function addTrack(trackData) {
     return existing;
   }
 
+  // Lifecycle fields belong to the server: a client posting a search result
+  // as-is (status 'none') must not stop the track from being queued.
+  const { status, error, createdAt, filePath, torrentHash, ...metadata } = trackData;
   const track = {
     id: trackData.id,
     title: trackData.title,
@@ -150,7 +153,7 @@ export async function addTrack(trackData) {
     error: null,
     createdAt: new Date().toISOString(),
     filePath: '',
-    ...trackData
+    ...metadata
   };
 
   db.tracks.push(track);

@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({
 }));
 
 const db = await import('../server/db.js');
-const { getTrackQualityRule } = await import('../server/worker.js');
+const { getTrackQualityRule, albumFolder } = await import('../server/worker.js');
 await db.init();
 after(() => env.cleanup());
 
@@ -48,6 +48,19 @@ test('re-adding a failed track requeues it; re-adding a live one is a no-op', as
   assert.equal(again.error, null);
   assert.deepEqual(again.artists, ['Y']);
   assert.equal(db.getTracks().filter(t => t.id === 'c').length, 1);
+});
+
+test('a posted search result cannot set its own status', async () => {
+  const t = await db.addTrack({ id: 'd', title: 'T', artist: 'Y', status: 'none', error: 'x', filePath: '/etc/passwd' });
+  assert.equal(t.status, 'wanted');
+  assert.equal(t.error, null);
+  assert.equal(t.filePath, '');
+});
+
+test('album folder carries the release year when known', () => {
+  assert.equal(albumFolder({ album: 'Currents', releaseDate: '2015-07-17' }), 'Currents (2015)');
+  assert.equal(albumFolder({ album: 'A/B', releaseDate: '' }), 'A_B');
+  assert.equal(albumFolder({ album: 'X' }), 'X');
 });
 
 test('quality rules: playlist rule beats artist rule, names match case-insensitively', async () => {

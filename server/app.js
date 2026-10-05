@@ -77,7 +77,7 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     try {
       // If we only have basic info, enrich it from Deezer details before adding
       let fullTrackData = { ...trackData };
-      if (!trackData.album || !trackData.albumArt || !trackData.duration) {
+      if (!trackData.album || !trackData.albumArt || !trackData.duration || !trackData.releaseDate) {
         console.log(`[API] Enriching track metadata for ${trackData.title}`);
         const details = await utils.getDeezerTrackDetails(trackData.id);
         if (details) {

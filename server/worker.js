@@ -11,6 +11,14 @@ function sanitizeFilename(name) {
   return name.replace(/[\\/:*?"<>|]/g, '_');
 }
 
+// Album folder as the library names it: "Album (Year)", or just "Album"
+// when the release date is unknown.
+export function albumFolder(track) {
+  const year = (track.releaseDate || '').slice(0, 4);
+  const album = sanitizeFilename(track.album);
+  return /^\d{4}$/.test(year) ? `${album} (${year})` : album;
+}
+
 // Generate M3U playlist file
 async function regenerateM3UPlaylist(playlist) {
   try {
@@ -333,7 +341,7 @@ async function pollActiveDownloads(settings) {
         
         const quality = track.targetQuality || settings.audioQuality || '320k';
         const artistDir = sanitizeFilename(track.artists[0]);
-        const albumDir = sanitizeFilename(track.album);
+        const albumDir = albumFolder(track);
         const targetAlbumDir = path.join(settings.libraryPath, artistDir, albumDir);
         const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
         
@@ -450,7 +458,7 @@ async function downloadDirectFromYouTube(track, settings, format, quality) {
     await db.updateTrack(track.id, { status: 'downloading' });
 
     const artistDir = sanitizeFilename(track.artists[0]);
-    const albumDir = sanitizeFilename(track.album);
+    const albumDir = albumFolder(track);
     const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
     
     const actualFormat = format === 'flac' ? 'mp3' : format;

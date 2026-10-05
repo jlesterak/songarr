@@ -11,7 +11,6 @@
   4. Press Test Connections, request one well-seeded track, watch for: hash resolved via the `songarr-<id>` tag, file copied, torrent removed.
   5. Check Cleanuparr's Queue Cleaner leaves `songarr-*` torrents alone (it manages that qBittorrent for Sonarr/Radarr).
   6. Navidrome scan: set its URL (`http://navidrome:4533`), user and Subsonic token; confirm the scan fires and the track shows up.
-- Library layout: Songarr writes `Artist/Album/NN - Title.ext`; the library convention is `music/Artist/Album (Year)/`. Add the year to the album folder.
 - SABnzbd/Transmission/Deluge paths work against the mocks only; qBittorrent is the one to prove for real.
 - (Jake) Decide where the image lives. Upstream ds needs a public image (`ghcr.io/jlesterak/songarr` in the draft, i.e. GitHub). Private alternative: build on icebox (`docker build -t songarr:local .`) and use a local ds override with that image; ds pulls will warn for it.
 - (Jake) Review `dockstarter/.apps/songarr/` before it goes anywhere; then install on icebox or open the upstream PR.
@@ -19,6 +18,7 @@
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Album folders are `Album (Year)` (library convention) when Deezer gives a release date; POST /tracks enriches a track that arrives without one. Fixed: a track posted with client-side lifecycle fields (e.g. a raw search result with `status: none`) was stored with that status and never queued; the server now owns status/error/filePath/createdAt/torrentHash, and re-adding a `none` track requeues it. Found in the first real run on icebox. 27 tests.
 - Seeding is a setting (default on): the torrent stays in the client after import and is removed with its download files at an optional ratio and/or seed-time limit (0 = seed until removed by hand). Library files are hardlinked (no extra space; copy fallback across filesystems, or `importMode: copy`); MP3s are always copied because ID3 tagging edits the file in place and would corrupt the seed. SABnzbd jobs are always removed. 7 new tests (25 total).
 - Container: multi-stage `Dockerfile` (vite build, prod deps, node:22-alpine with Alpine ffmpeg and upstream yt-dlp, updated at start unless YTDLP_AUTOUPDATE=false), PUID/PGID/TZ via `docker/entrypoint.sh` (su-exec), `/config` and `/music` volumes, healthcheck. Built and smoke-tested locally (492 MB). yt-dlp now runs with Node as its JS runtime (`--js-runtimes node:...`), which YouTube needs.
 - DockSTARTer template proposal in `dockstarter/.apps/songarr/`, following the upstream `.TEMPLATE`; validated with `docker compose config`.
