@@ -1,0 +1,3 @@
+services:
+  songarr<__instance>:
+    hostname: ${SONGARR<__INSTANCE>__HOSTNAME?}

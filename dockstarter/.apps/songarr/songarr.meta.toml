@@ -1,0 +1,17 @@
+[app]
+description = "Track-first music requests: search a song, get it tagged in your library"
+helptext = "{{|App|}}Songarr{{[-]}} requests individual tracks instead of whole albums. It searches Deezer for metadata, downloads from YouTube or through Prowlarr/Jackett and a torrent or Usenet client, tags the file and files it into your music library, with M3U playlists and Navidrome scan triggers."
+website = "https://github.com/jlesterak/songarr"
+
+["songarr<__instance>:YTDLP_AUTOUPDATE"]
+helpline = "Update yt-dlp each time the container starts."
+
+[["songarr<__instance>:YTDLP_AUTOUPDATE".options]]
+value = "'true'"
+label = "Yes"
+help = "Keep YouTube downloads working (recommended)."
+
+[["songarr<__instance>:YTDLP_AUTOUPDATE".options]]
+value = "'false'"
+label = "No"
+help = "Use the yt-dlp version shipped in the image."

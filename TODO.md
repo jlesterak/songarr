@@ -4,11 +4,24 @@
 - Torrent path: Prowlarr/Jackett search, qBittorrent/Deluge clients, per-track quality rules, torrent scoring, active-download polling with YouTube fallback. Covered end to end by `npm test` against `server/mocks.js` (all four clients, both indexers); not yet run against real Prowlarr/qBittorrent.
 
 ## [PENDING]
-- Test the torrent path against the real homelab Prowlarr + download client.
-- Containerize and deploy via DockSTARTer, with an upstream-ready ds app template proposal.
+- (Jake's OK needed) Real-service test on icebox, where Prowlarr, qbittorrentvpn and Navidrome already run under ds:
+  1. Run Songarr on icebox in the ds network (container from this repo, `/config` in appdata, `/music` -> the library's `music/`), or `npm start` on pop-os with SONGARR_DATA_DIR pointed at a scratch dir.
+  2. Settings: Download Method `torrent`, Indexer `prowlarr` at `http://prowlarr:9696` + its API key (Prowlarr > Settings > General), client `qbittorrent` at `http://qbittorrentvpn:8080` + WebUI user/pass.
+  3. Remote Path Mapping: qbittorrentvpn's save path (e.g. `/downloads`) -> the same folder as Songarr's container sees it (e.g. `/storage/downloads`). Check the qbittorrentvpn compose for the real mount.
+  4. Press Test Connections, request one well-seeded track, watch for: hash resolved via the `songarr-<id>` tag, file copied, torrent removed.
+  5. Check Cleanuparr's Queue Cleaner leaves `songarr-*` torrents alone (it manages that qBittorrent for Sonarr/Radarr).
+  6. Navidrome scan: set its URL (`http://navidrome:4533`), user and Subsonic token; confirm the scan fires and the track shows up.
+- (Jake) After import Songarr deletes the torrent and its files (`removeTorrent(hash, true)`), so it never seeds. Fine for public trackers; bad for private-tracker ratio. Make it a setting?
+- Library layout: Songarr writes `Artist/Album/NN - Title.ext`; the library convention is `music/Artist/Album (Year)/`. Add the year to the album folder.
+- SABnzbd/Transmission/Deluge paths work against the mocks only; qBittorrent is the one to prove for real.
+- (Jake) Decide where the image lives. Upstream ds needs a public image (`ghcr.io/jlesterak/songarr` in the draft, i.e. GitHub). Private alternative: build on icebox (`docker build -t songarr:local .`) and use a local ds override with that image; ds pulls will warn for it.
+- (Jake) Review `dockstarter/.apps/songarr/` before it goes anywhere; then install on icebox or open the upstream PR.
+- arm64 build (`docker buildx build --platform linux/arm64`) before claiming aarch64 support in the template.
 - Point the library at the Navidrome music share and confirm M3U sync + auto-scan.
 
 ## [COMPLETED]
+- Container: multi-stage `Dockerfile` (vite build, prod deps, node:22-alpine with Alpine ffmpeg and upstream yt-dlp, updated at start unless YTDLP_AUTOUPDATE=false), PUID/PGID/TZ via `docker/entrypoint.sh` (su-exec), `/config` and `/music` volumes, healthcheck. Built and smoke-tested locally (492 MB). yt-dlp now runs with Node as its JS runtime (`--js-runtimes node:...`), which YouTube needs.
+- DockSTARTer template proposal in `dockstarter/.apps/songarr/`, following the upstream `.TEMPLATE`; validated with `docker compose config`.
 - Offline `npm test` (node:test, 18 tests): YouTube/torrent scoring, quality rules, DB init + crash recovery, torrent path end to end per client. Live Deezer/Spotify/binary checks moved to `npm run check:live`.
 - Fixed bugs the tests exposed: qBittorrent hash was stored as `true` (now resolved by tag or info hash); FLAC/M4A from torrents were renamed to the target extension and had ID3 written into them; album mode recorded a `filePath` that didn't exist; Deluge's `{}` for an unknown hash read as a live torrent; a random fake hash was stored when a client returned none; yt-dlp got `--audio-quality` twice.
 - Added remote path mapping (client path -> Songarr path) and `SONGARR_DATA_DIR`/`SONGARR_MUSIC_DIR`/`SONGARR_BIN_DIR`/`SONGARR_TEMP_DIR`.

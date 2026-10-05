@@ -1,0 +1,6 @@
+services:
+  songarr<__instance>:
+    labels:
+      com.dockstarter.appinfo.deprecated: "false"
+      com.dockstarter.appinfo.description: "Track-first music requests: search a song, get it tagged in your library"
+      com.dockstarter.appinfo.nicename: "Songarr<__Instance>"

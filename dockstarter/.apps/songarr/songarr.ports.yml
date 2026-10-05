@@ -1,0 +1,4 @@
+services:
+  songarr<__instance>:
+    ports:
+      - ${SONGARR<__INSTANCE>__PORT_3001?}:3001

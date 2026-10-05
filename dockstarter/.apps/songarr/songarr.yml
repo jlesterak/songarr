@@ -1,0 +1,13 @@
+services:
+  songarr<__instance>:
+    container_name: ${SONGARR<__INSTANCE>__CONTAINER_NAME?}
+    env_file: .env.app.songarr<__instance>
+    environment:
+      - PGID=${PGID?}
+      - PUID=${PUID?}
+      - TZ=${TZ?}
+    restart: ${SONGARR<__INSTANCE>__RESTART?}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ${DOCKER_VOLUME_CONFIG?}/songarr<__instance>:/config
+      - ${SONGARR<__INSTANCE>__VOLUME_MUSIC?}:/music

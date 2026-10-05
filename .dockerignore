@@ -1,0 +1,12 @@
+.git
+node_modules
+dist
+bin
+data
+music
+temp
+test
+scripts
+dockstarter
+*.md
+setup-binaries.sh

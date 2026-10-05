@@ -177,7 +177,7 @@ export async function searchYouTube(query, limit = 5) {
     const args = [
       `ytsearch${limit}:${query}`,
       '--dump-json',
-      ...ffmpegLocationArgs(),
+      ...ytdlpCommonArgs(),
       '--no-playlist'
     ];
     
@@ -205,8 +205,13 @@ export async function searchYouTube(query, limit = 5) {
   }
 }
 
-function ffmpegLocationArgs() {
-  return path.isAbsolute(FFMPEG_PATH) ? ['--ffmpeg-location', FFMPEG_PATH] : [];
+// Arguments every yt-dlp call needs: where ffmpeg lives (only when it isn't
+// on PATH), and Node as the JS runtime YouTube's player challenges now need
+// (yt-dlp only enables Deno by default).
+function ytdlpCommonArgs() {
+  const args = ['--js-runtimes', `node:${process.execPath}`];
+  if (path.isAbsolute(FFMPEG_PATH)) args.push('--ffmpeg-location', FFMPEG_PATH);
+  return args;
 }
 
 // yt-dlp takes either a VBR level (0 best .. 10 worst) or a bitrate with a K
@@ -230,7 +235,7 @@ export async function downloadTrackAudio(youtubeUrl, outputFile, format = 'mp3',
     '--audio-format', format,
     '--audio-quality', audioQualityArg(quality),
     '--output', `${tempOutBase}.%(ext)s`,
-    ...ffmpegLocationArgs(),
+    ...ytdlpCommonArgs(),
     '--no-playlist'
   ];
 

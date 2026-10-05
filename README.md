@@ -75,6 +75,19 @@ pm2 start server/index.js --name songarr
 
 ---
 
+### Option 3: Docker
+
+```bash
+docker build -t songarr .
+docker run -d --name songarr -p 3001:3001 \
+  -e PUID=1000 -e PGID=1000 -e TZ=America/Anchorage \
+  -v /path/to/appdata/songarr:/config -v /path/to/music:/music songarr
+```
+
+The image bundles ffmpeg and yt-dlp (updated at each start; `-e YTDLP_AUTOUPDATE=false` to skip). A DockSTARTer template proposal is in `dockstarter/`.
+
+---
+
 ## Database & Storage Paths
 
 Defaults are relative to the working directory; each can be moved with an environment variable:
