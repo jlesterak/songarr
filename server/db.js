@@ -16,7 +16,19 @@ let db = {
     audioQuality: '320k', // default to high quality 320kbps
     navidromeUrl: '',
     navidromeToken: '', // Subsonic hex hash
-    spotifyPlaylistUrls: []
+    spotifyPlaylistUrls: [],
+    
+    // Phase 2 features
+    downloadMethod: 'direct', // 'direct' or 'torrent'
+    albumDownloadMode: 'single', // 'single' or 'album'
+    indexerType: 'prowlarr', // 'prowlarr' or 'jackett'
+    prowlarrUrl: '',
+    prowlarrApiKey: '',
+    torrentClient: 'qbittorrent', // 'qbittorrent', 'deluge', 'transmission', 'sabnzbd'
+    torrentClientUrl: 'http://localhost:8080',
+    torrentClientUsername: '',
+    torrentClientPassword: '',
+    qualityRules: [] // array of { id, type, name, format, quality }
   }
 };
 
@@ -44,6 +56,20 @@ export async function init() {
       console.error('Error loading database:', err);
     }
     // Save defaults
+    await save();
+  }
+
+  // Crash recovery: reset stuck status items back to wanted
+  let recovered = false;
+  db.tracks.forEach(track => {
+    if (['snatched', 'downloading', 'downloaded'].includes(track.status)) {
+      track.status = 'wanted';
+      track.error = null;
+      recovered = true;
+    }
+  });
+  if (recovered) {
+    console.log('[DB] Recovered pending tracks back to "wanted" status.');
     await save();
   }
   

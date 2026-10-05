@@ -13,7 +13,35 @@ export default function App() {
   const [stats, setStats] = useState({ wanted: 0, snatched: 0, downloading: 0, downloaded: 0, imported: 0, failed: 0, total: 0, librarySize: '0 MB' });
   const [tracks, setTracks] = useState([]);
   const [playlists, setPlaylists] = useState([]);
-  const [settings, setSettings] = useState({ libraryPath: '', autoDownload: true, downloadInterval: 5, audioFormat: 'mp3', audioQuality: '320k', navidromeUrl: '', navidromeUsername: '', navidromePassword: '' });
+  const [settings, setSettings] = useState({
+    libraryPath: '',
+    autoDownload: true,
+    downloadInterval: 5,
+    audioFormat: 'mp3',
+    audioQuality: '320k',
+    navidromeUrl: '',
+    navidromeUsername: '',
+    navidromePassword: '',
+    downloadMethod: 'direct',
+    albumDownloadMode: 'single',
+    indexerType: 'prowlarr',
+    prowlarrUrl: '',
+    prowlarrApiKey: '',
+    torrentClient: 'qbittorrent',
+    torrentClientUrl: '',
+    torrentClientUsername: '',
+    torrentClientPassword: '',
+    qualityRules: []
+  });
+  
+  const [settingsTab, setSettingsTab] = useState('general');
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResults, setTestResults] = useState(null);
+  
+  const [ruleType, setRuleType] = useState('playlist');
+  const [ruleName, setRuleName] = useState('');
+  const [ruleFormat, setRuleFormat] = useState('mp3');
+  const [ruleQuality, setRuleQuality] = useState('320k');
   
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -220,6 +248,51 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleTestConnections = async () => {
+    setTestingConnection(true);
+    setTestResults(null);
+    try {
+      const res = await fetch('/api/v1/settings/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTestResults(data);
+      } else {
+        alert('Failed to connect to the test endpoint on server.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error testing connections.');
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleAddRule = (e) => {
+    e.preventDefault();
+    if (!ruleName.trim()) return;
+    
+    const newRule = {
+      id: 'rule_' + Math.random().toString(36).substr(2, 9),
+      type: ruleType,
+      name: ruleName.trim(),
+      format: ruleFormat,
+      quality: ruleQuality
+    };
+    
+    const updatedRules = [...(settings.qualityRules || []), newRule];
+    setSettings({ ...settings, qualityRules: updatedRules });
+    setRuleName('');
+  };
+
+  const handleDeleteRule = (id) => {
+    const updatedRules = (settings.qualityRules || []).filter(r => r.id !== id);
+    setSettings({ ...settings, qualityRules: updatedRules });
   };
 
   // Save Settings
@@ -537,6 +610,8 @@ export default function App() {
                           <td>{track.album}</td>
                           <td>
                             <span className={`badge badge-${track.status}`}>{track.status}</span>
+                            {track.downloadMethod && <span className="method-badge">{track.downloadMethod}</span>}
+                            {track.format && <span className="format-badge">{track.format.toUpperCase()}</span>}
                             {track.error && <div className="error-msg" title={track.error}>{track.error}</div>}
                           </td>
                           <td>
@@ -709,6 +784,8 @@ export default function App() {
                         <td>{formatDuration(track.duration)}</td>
                         <td>
                           <span className={`badge badge-${track.status}`}>{track.status}</span>
+                          {track.downloadMethod && <span className="method-badge">{track.downloadMethod}</span>}
+                          {track.format && <span className="format-badge">{track.format.toUpperCase()}</span>}
                           {track.error && <div className="error-msg" title={track.error}>{track.error}</div>}
                           {track.filePath && (
                             <div style={{fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.25rem', wordBreak: 'break-all'}}>
@@ -924,131 +1001,449 @@ export default function App() {
 
         {/* 6. SETTINGS VIEW */}
         {activeTab === 'settings' && (
-          <form onSubmit={handleSaveSettings} className="panel">
-            <div className="settings-grid">
-              
-              {/* Left Column: Acquisition Directories and Formats */}
-              <div>
-                <h3 style={{fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
-                  Library & Downloader
-                </h3>
-                
-                <div className="form-group">
-                  <label className="form-label">Music Library Destination Path</label>
-                  <input 
-                    type="text" 
-                    className="input-text" 
-                    required 
-                    value={settings.libraryPath}
-                    onChange={e => setSettings({...settings, libraryPath: e.target.value})}
-                  />
-                  <span className="form-help">Where imported track files are organized.</span>
-                </div>
+          <div className="panel">
+            {/* Settings Tab Headers */}
+            <div className="settings-tabs">
+              <button 
+                type="button"
+                className={`settings-tab-btn ${settingsTab === 'general' ? 'active' : ''}`}
+                onClick={() => setSettingsTab('general')}
+              >
+                ⚙️ General & Media Server
+              </button>
+              <button 
+                type="button"
+                className={`settings-tab-btn ${settingsTab === 'connectors' ? 'active' : ''}`}
+                onClick={() => setSettingsTab('connectors')}
+              >
+                🔌 Indexers & Downloaders
+              </button>
+              <button 
+                type="button"
+                className={`settings-tab-btn ${settingsTab === 'overrides' ? 'active' : ''}`}
+                onClick={() => setSettingsTab('overrides')}
+              >
+                🎛️ Quality Overrides
+              </button>
+            </div>
 
-                <div className="form-group">
-                  <label className="form-label">Audio Format</label>
-                  <select 
-                    className="select-custom"
-                    value={settings.audioFormat}
-                    onChange={e => setSettings({...settings, audioFormat: e.target.value})}
-                  >
-                    <option value="mp3">MP3 (.mp3)</option>
-                    <option value="m4a">M4A / AAC (.m4a)</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Target Bitrate Quality</label>
-                  <select 
-                    className="select-custom"
-                    value={settings.audioQuality}
-                    onChange={e => setSettings({...settings, audioQuality: e.target.value})}
-                  >
-                    <option value="320k">320kbps (High Lossy)</option>
-                    <option value="256k">256kbps (Standard Streaming)</option>
-                    <option value="192k">192kbps (Medium)</option>
-                    <option value="128k">128kbps (Low Space)</option>
-                  </select>
-                </div>
-
-                <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', gap: '1rem', marginTop: '1rem'}}>
-                  <input 
-                    type="checkbox" 
-                    id="autoDownload"
-                    checked={settings.autoDownload}
-                    onChange={e => setSettings({...settings, autoDownload: e.target.checked})}
-                    style={{width: '20px', height: '20px'}}
-                  />
+            <form onSubmit={handleSaveSettings}>
+              {/* TAB 1: GENERAL & MEDIA SERVER */}
+              {settingsTab === 'general' && (
+                <div className="settings-grid">
+                  {/* Left Column: Acquisition Directories and Formats */}
                   <div>
-                    <label className="form-label" htmlFor="autoDownload" style={{cursor: 'pointer'}}>Enable Background Worker</label>
-                    <span className="form-help" style={{display: 'block'}}>Process queue automatically in the background.</span>
+                    <h3 style={{fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
+                      Library & Format Defaults
+                    </h3>
+                    
+                    <div className="form-group">
+                      <label className="form-label">Music Library Destination Path</label>
+                      <input 
+                        type="text" 
+                        className="input-text" 
+                        required 
+                        value={settings.libraryPath}
+                        onChange={e => setSettings({...settings, libraryPath: e.target.value})}
+                      />
+                      <span className="form-help">Where imported track files are organized.</span>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Audio Format</label>
+                      <select 
+                        className="select-custom"
+                        value={settings.audioFormat}
+                        onChange={e => setSettings({...settings, audioFormat: e.target.value})}
+                      >
+                        <option value="mp3">MP3 (.mp3)</option>
+                        <option value="m4a">M4A / AAC (.m4a)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Target Bitrate Quality</label>
+                      <select 
+                        className="select-custom"
+                        value={settings.audioQuality}
+                        onChange={e => setSettings({...settings, audioQuality: e.target.value})}
+                      >
+                        <option value="320k">320kbps (High Lossy)</option>
+                        <option value="256k">256kbps (Standard Streaming)</option>
+                        <option value="192k">192kbps (Medium)</option>
+                        <option value="128k">128kbps (Low Space)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', gap: '1rem', marginTop: '1rem'}}>
+                      <input 
+                        type="checkbox" 
+                        id="autoDownload"
+                        checked={settings.autoDownload}
+                        onChange={e => setSettings({...settings, autoDownload: e.target.checked})}
+                        style={{width: '20px', height: '20px'}}
+                      />
+                      <div>
+                        <label className="form-label" htmlFor="autoDownload" style={{cursor: 'pointer'}}>Enable Background Worker</label>
+                        <span className="form-help" style={{display: 'block'}}>Process queue automatically in the background.</span>
+                      </div>
+                    </div>
+
+                    {settings.autoDownload && (
+                      <div className="form-group" style={{marginTop: '1rem'}}>
+                        <label className="form-label">Check Queue Interval (Minutes)</label>
+                        <input 
+                          type="number" 
+                          className="input-text" 
+                          min="1"
+                          value={settings.downloadInterval}
+                          onChange={e => setSettings({...settings, downloadInterval: parseInt(e.target.value) || 5})}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: Navidrome Integration */}
+                  <div>
+                    <h3 style={{fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
+                      Navidrome Media Server Integration
+                    </h3>
+                    <p style={{color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
+                      Trigger automatic scans in Navidrome when new songs are downloaded. Uses the standard Subsonic API.
+                    </p>
+
+                    <div className="form-group">
+                      <label className="form-label">Navidrome / Subsonic Server URL</label>
+                      <input 
+                        type="url" 
+                        className="input-text" 
+                        placeholder="e.g. http://192.168.1.100:4533"
+                        value={settings.navidromeUrl}
+                        onChange={e => setSettings({...settings, navidromeUrl: e.target.value})}
+                      />
+                      <span className="form-help">The external address of your Navidrome media server.</span>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Navidrome Username</label>
+                      <input 
+                        type="text" 
+                        className="input-text" 
+                        placeholder="admin"
+                        value={settings.navidromeUsername}
+                        onChange={e => setSettings({...settings, navidromeUsername: e.target.value})}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Navidrome Password / Subsonic Token</label>
+                      <input 
+                        type="password" 
+                        className="input-text" 
+                        placeholder="••••••••••••••"
+                        value={settings.navidromePassword}
+                        onChange={e => setSettings({...settings, navidromePassword: e.target.value})}
+                      />
+                      <span className="form-help">Your password. Used to verify connection, passwords are encrypted locally.</span>
+                    </div>
                   </div>
                 </div>
+              )}
 
-                {settings.autoDownload && (
-                  <div className="form-group" style={{marginTop: '1rem'}}>
-                    <label className="form-label">Check Queue Interval (Minutes)</label>
-                    <input 
-                      type="number" 
-                      className="input-text" 
-                      min="1"
-                      value={settings.downloadInterval}
-                      onChange={e => setSettings({...settings, downloadInterval: parseInt(e.target.value) || 5})}
-                    />
+              {/* TAB 2: CONNECTORS (INDEXERS & DOWNLOADERS) */}
+              {settingsTab === 'connectors' && (
+                <div className="settings-grid">
+                  {/* Left Column: Acquisition Mode and Indexer Configuration */}
+                  <div>
+                    <h3 style={{fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
+                      Acquisition Method Settings
+                    </h3>
+                    
+                    <div className="form-group">
+                      <label className="form-label">Download Mode</label>
+                      <select 
+                        className="select-custom"
+                        value={settings.downloadMethod}
+                        onChange={e => setSettings({...settings, downloadMethod: e.target.value})}
+                      >
+                        <option value="direct">Direct Download (YouTube Music / yt-dlp)</option>
+                        <option value="torrent">Torrent / Usenet search (Prowlarr/Jackett)</option>
+                      </select>
+                      <span className="form-help">Choose between YouTube scraping or full lossless Torrent/Usenet indexes.</span>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Album Post-Processing Mode</label>
+                      <select 
+                        className="select-custom"
+                        value={settings.albumDownloadMode}
+                        onChange={e => setSettings({...settings, albumDownloadMode: e.target.value})}
+                      >
+                        <option value="single">Extract Single Track (Delete rest of torrent files)</option>
+                        <option value="album">Keep Entire Album (Save all torrent audio files)</option>
+                      </select>
+                      <span className="form-help">Controls folder behavior when snatching multi-file releases.</span>
+                    </div>
+
+                    {settings.downloadMethod === 'torrent' && (
+                      <div style={{marginTop: '2rem'}}>
+                        <h4 style={{fontSize: '1.1rem', marginBottom: '1rem', fontFamily: 'var(--font-family-heading)'}}>Indexer Integration</h4>
+                        
+                        <div className="form-group">
+                          <label className="form-label">Indexer Manager Type</label>
+                          <select 
+                            className="select-custom"
+                            value={settings.indexerType}
+                            onChange={e => setSettings({...settings, indexerType: e.target.value})}
+                          >
+                            <option value="prowlarr">Prowlarr</option>
+                            <option value="jackett">Jackett</option>
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label">Indexer API / Web Address URL</label>
+                          <input 
+                            type="url" 
+                            className="input-text" 
+                            placeholder="e.g. http://localhost:9696"
+                            value={settings.prowlarrUrl}
+                            onChange={e => setSettings({...settings, prowlarrUrl: e.target.value})}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label">Indexer API Key</label>
+                          <input 
+                            type="password" 
+                            className="input-text" 
+                            placeholder="API Key string..."
+                            value={settings.prowlarrApiKey}
+                            onChange={e => setSettings({...settings, prowlarrApiKey: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {/* Right Column: Download Client Credentials */}
+                  <div>
+                    {settings.downloadMethod === 'torrent' && (
+                      <div>
+                        <h3 style={{fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
+                          Download Client Integration
+                        </h3>
+                        
+                        <div className="form-group">
+                          <label className="form-label">Download Client Type</label>
+                          <select 
+                            className="select-custom"
+                            value={settings.torrentClient}
+                            onChange={e => setSettings({...settings, torrentClient: e.target.value})}
+                          >
+                            <option value="qbittorrent">qBittorrent</option>
+                            <option value="deluge">Deluge</option>
+                            <option value="transmission">Transmission</option>
+                            <option value="sabnzbd">SABnzbd (NZB / Usenet)</option>
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label">Client Connection URL</label>
+                          <input 
+                            type="url" 
+                            className="input-text" 
+                            placeholder="e.g. http://localhost:8080"
+                            value={settings.torrentClientUrl}
+                            onChange={e => setSettings({...settings, torrentClientUrl: e.target.value})}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label">Username (Not needed for Deluge)</label>
+                          <input 
+                            type="text" 
+                            className="input-text" 
+                            value={settings.torrentClientUsername}
+                            onChange={e => setSettings({...settings, torrentClientUsername: e.target.value})}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label">Password / WebUI Secret key</label>
+                          <input 
+                            type="password" 
+                            className="input-text" 
+                            placeholder="••••••••••••••"
+                            value={settings.torrentClientPassword}
+                            onChange={e => setSettings({...settings, torrentClientPassword: e.target.value})}
+                          />
+                          <span className="form-help">Enter the password or api key of your selected downloader client.</span>
+                        </div>
+
+                        <button 
+                          type="button" 
+                          className="btn btn-secondary" 
+                          style={{width: '100%', marginTop: '1rem', padding: '0.8rem'}}
+                          onClick={handleTestConnections}
+                          disabled={testingConnection}
+                        >
+                          {testingConnection ? <span className="spinner"></span> : '🔍'} Test Connections
+                        </button>
+
+                        {testResults && (
+                          <div className="test-panel">
+                            <h4 style={{fontSize: '0.9rem', marginBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.25rem'}}>Connection Test Summary:</h4>
+                            <div className="test-result-item">
+                              <span>Indexer Connection:</span>
+                              <span className={testResults.indexer.success ? 'test-result-success' : 'test-result-failed'}>
+                                {testResults.indexer.success ? 'SUCCESS' : 'FAILED'}
+                              </span>
+                            </div>
+                            <p style={{fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem'}}>
+                              {testResults.indexer.message}
+                            </p>
+                            
+                            <div className="test-result-item">
+                              <span>Downloader Client:</span>
+                              <span className={testResults.downloadClient.success ? 'test-result-success' : 'test-result-failed'}>
+                                {testResults.downloadClient.success ? 'SUCCESS' : 'FAILED'}
+                              </span>
+                            </div>
+                            <p style={{fontSize: '0.75rem', color: 'var(--color-text-muted)'}}>
+                              {testResults.downloadClient.message}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {settings.downloadMethod === 'direct' && (
+                      <div style={{padding: '2rem', textAlign: 'center', backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-lg)'}}>
+                        <p style={{fontSize: '3rem'}}>🎵</p>
+                        <h4 style={{marginBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>Direct Download Mode Active</h4>
+                        <p style={{fontSize: '0.85rem', color: 'var(--color-text-secondary)'}}>
+                          All queue items will search YouTube for standard audio recordings. No Prowlarr indexers or local BitTorrent clients are utilized in this configuration.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: QUALITY OVERRIDES */}
+              {settingsTab === 'overrides' && (
+                <div>
+                  <h3 style={{fontSize: '1.25rem', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
+                    Quality & Format Overrides
+                  </h3>
+                  <p style={{color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
+                    Configure specific artists or playlists to target higher quality codecs (like FLAC lossless) or lower bitrates, overriding the global defaults.
+                  </p>
+
+                  {/* Add New Override Rule Form */}
+                  <div className="rules-form-inline">
+                    <div className="form-group" style={{flex: 1, marginBottom: 0}}>
+                      <label className="form-label">Override Type</label>
+                      <select 
+                        className="select-custom" 
+                        value={ruleType}
+                        onChange={e => setRuleType(e.target.value)}
+                      >
+                        <option value="artist">Artist Name</option>
+                        <option value="playlist">Playlist Name</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{flex: 2, marginBottom: 0}}>
+                      <label className="form-label">Target Name (Match string)</label>
+                      <input 
+                        type="text" 
+                        className="input-text" 
+                        placeholder="e.g. Daft Punk" 
+                        value={ruleName}
+                        onChange={e => setRuleName(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="form-group" style={{flex: 1, marginBottom: 0}}>
+                      <label className="form-label">Override Format</label>
+                      <select 
+                        className="select-custom" 
+                        value={ruleFormat}
+                        onChange={e => setRuleFormat(e.target.value)}
+                      >
+                        <option value="mp3">MP3</option>
+                        <option value="flac">FLAC (Lossless)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{flex: 1, marginBottom: 0}}>
+                      <label className="form-label">Override Quality</label>
+                      <select 
+                        className="select-custom" 
+                        value={ruleQuality}
+                        onChange={e => setRuleQuality(e.target.value)}
+                      >
+                        <option value="320k">320kbps (High)</option>
+                        <option value="lossless">Lossless (FLAC Only)</option>
+                      </select>
+                    </div>
+
+                    <button 
+                      type="button" 
+                      className="btn btn-primary" 
+                      style={{padding: '0.75rem 1.25rem', whiteSpace: 'nowrap'}}
+                      onClick={handleAddRule}
+                    >
+                      ➕ Add Rule
+                    </button>
+                  </div>
+
+                  {/* Active Rules List */}
+                  {(settings.qualityRules || []).length === 0 ? (
+                    <div className="no-data">No active override rules defined. Global defaults will apply.</div>
+                  ) : (
+                    <table className="rules-table">
+                      <thead>
+                        <tr>
+                          <th>Type</th>
+                          <th>Target Match Name</th>
+                          <th>Codec Format</th>
+                          <th>Target Quality</th>
+                          <th style={{textAlign: 'right'}}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(settings.qualityRules || []).map(rule => (
+                          <tr key={rule.id}>
+                            <td style={{textTransform: 'capitalize', fontWeight: '600'}}>{rule.type}</td>
+                            <td>{rule.name}</td>
+                            <td style={{textTransform: 'uppercase'}}>{rule.format}</td>
+                            <td>{rule.quality === 'lossless' ? 'Lossless' : rule.quality}</td>
+                            <td style={{textAlign: 'right'}}>
+                              <button 
+                                type="button" 
+                                className="btn btn-danger" 
+                                style={{padding: '0.4rem 0.8rem'}}
+                                onClick={() => handleDeleteRule(rule.id)}
+                              >
+                                🗑️ Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              <div style={{marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem'}}>
+                <button type="submit" className="btn btn-primary">Save Configurations</button>
               </div>
-
-              {/* Right Column: Navidrome Media Server Integration */}
-              <div>
-                <h3 style={{fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>
-                  Navidrome Media Server Integration
-                </h3>
-                <p style={{color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
-                  Trigger automatic scans in Navidrome when new songs are downloaded. Uses the standard Subsonic API.
-                </p>
-
-                <div className="form-group">
-                  <label className="form-label">Navidrome / Subsonic Server URL</label>
-                  <input 
-                    type="url" 
-                    className="input-text" 
-                    placeholder="e.g. http://192.168.1.100:4533"
-                    value={settings.navidromeUrl}
-                    onChange={e => setSettings({...settings, navidromeUrl: e.target.value})}
-                  />
-                  <span className="form-help">The external address of your Navidrome media server.</span>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Navidrome Username</label>
-                  <input 
-                    type="text" 
-                    className="input-text" 
-                    placeholder="admin"
-                    value={settings.navidromeUsername}
-                    onChange={e => setSettings({...settings, navidromeUsername: e.target.value})}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Navidrome Password / Subsonic Token</label>
-                  <input 
-                    type="password" 
-                    className="input-text" 
-                    placeholder="••••••••••••••"
-                    value={settings.navidromePassword}
-                    onChange={e => setSettings({...settings, navidromePassword: e.target.value})}
-                  />
-                  <span className="form-help">Your password. Used to verify connection, passwords are encrypted locally.</span>
-                </div>
-              </div>
-            </div>
-
-            <div style={{marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem'}}>
-              <button type="submit" className="btn btn-primary">Save Configurations</button>
-            </div>
-          </form>
+            </form>
+          </div>
         )}
       </main>
     </div>

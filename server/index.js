@@ -5,12 +5,14 @@ import fs from 'fs/promises';
 import * as db from './db.js';
 import * as utils from './utils.js';
 import * as worker from './worker.js';
+import mockRouter from './mocks.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use('/api/v1/mock', mockRouter);
 
 // Initialize Database & Worker
 await db.init();
@@ -273,6 +275,16 @@ app.post('/api/v1/settings', async (req, res) => {
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: 'Failed to save settings', details: err.message });
+  }
+});
+
+// Test settings connection
+app.post('/api/v1/settings/test', async (req, res) => {
+  try {
+    const results = await utils.testConnections(req.body);
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to run connection tests', details: err.message });
   }
 });
 

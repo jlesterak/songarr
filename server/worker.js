@@ -23,7 +23,6 @@ async function regenerateM3UPlaylist(playlist) {
     
     for (const track of playlist.tracks) {
       if (track.status === 'imported' && track.filePath) {
-        // Use relative path from the Playlists folder to the track file
         const relativePath = path.relative(playlistDir, track.filePath);
         content += `#EXTINF:${track.duration || 0},${track.artists.join(', ')} - ${track.title}\n`;
         content += `${relativePath}\n\n`;
@@ -44,13 +43,8 @@ async function triggerNavidromeScan() {
 
   try {
     let url = settings.navidromeUrl.replace(/\/$/, '');
-    // Subsonic API call
-    // If user provided a Subsonic URL or Navidrome URL, trigger scan
-    // Path: /rest/startScan.view or /api/v1/scan
     console.log('[Worker] Triggering Navidrome library scan...');
     
-    // We try Subsonic startScan.view first
-    // Needs user/token
     const subsonicUrl = `${url}/rest/startScan.view?u=${encodeURIComponent(settings.navidromeUsername || 'admin')}&t=${settings.navidromeToken}&s=songarr&v=1.16.1&c=songarr&f=json`;
     const res = await fetch(subsonicUrl);
     if (res.ok) {
@@ -64,16 +58,15 @@ async function triggerNavidromeScan() {
   }
 }
 
-// Core Matching Logic
+// Core Matching Logic for YouTube
 export function scoreCandidate(candidate, track, queryText) {
   let score = 100;
   
-  // 1. Duration difference check (extremely important)
   const durationDiff = Math.abs(candidate.duration - track.duration);
   if (durationDiff > 30) {
-    score -= durationDiff * 2; // Penalize heavily for major duration differences
+    score -= durationDiff * 2;
   } else {
-    score -= durationDiff * 1; // Minor penalty
+    score -= durationDiff * 1;
   }
   
   const titleLower = candidate.title.toLowerCase();
@@ -81,15 +74,12 @@ export function scoreCandidate(candidate, track, queryText) {
   const trackTitleLower = track.title.toLowerCase();
   const artistLower = track.artists[0]?.toLowerCase() || '';
 
-  // 2. Title match check
   const hasTitle = trackTitleLower.split(' ').every(word => {
-    // skip tiny words
     if (word.length <= 2) return true;
     return titleLower.includes(word);
   });
   if (!hasTitle) score -= 40;
 
-  // 3. Artist match check
   if (artistLower) {
     const hasArtist = artistLower.split(' ').every(word => {
       if (word.length <= 2) return true;
@@ -98,17 +88,14 @@ export function scoreCandidate(candidate, track, queryText) {
     if (!hasArtist) score -= 30;
   }
 
-  // 4. Boost label uploads (Topic channels are official high quality audio uploads)
   if (channelLower.includes('topic') || channelLower.endsWith('- topic')) {
     score += 25;
   }
 
-  // 5. Boost "audio" / "official audio" uploads
   if (titleLower.includes('official audio') || titleLower.includes('audio')) {
     score += 15;
   }
 
-  // 6. Penalize live, cover, remix (unless requested in the title)
   const isLiveRequested = trackTitleLower.includes('live');
   const isCoverRequested = trackTitleLower.includes('cover');
   const isRemixRequested = trackTitleLower.includes('remix');
@@ -126,118 +113,394 @@ export function scoreCandidate(candidate, track, queryText) {
   return score;
 }
 
+// Quality Rules Resolver
+export function getTrackQualityRule(track, settings) {
+  const qualityRules = settings.qualityRules || [];
+  
+  // 1. Check playlist rules
+  const playlists = db.getPlaylists();
+  const trackPlaylists = playlists.filter(pl => pl.trackIds.includes(track.id));
+  for (const pl of trackPlaylists) {
+    const plRule = qualityRules.find(r => r.type === 'playlist' && r.name.toLowerCase() === pl.name.toLowerCase());
+    if (plRule) return plRule;
+  }
+  
+  // 2. Check artist rules
+  for (const artist of track.artists) {
+    const artistRule = qualityRules.find(r => r.type === 'artist' && r.name.toLowerCase() === artist.toLowerCase());
+    if (artistRule) return artistRule;
+  }
+  
+  return null;
+}
+
+// Score Torrent Candidates
+export function scoreTorrentCandidate(torrent, track, targetFormat) {
+  let score = 100;
+  const titleLower = torrent.title.toLowerCase();
+  const trackTitleLower = track.title.toLowerCase();
+  const artistLower = track.artists[0]?.toLowerCase() || '';
+  
+  if (torrent.seeders === 0) {
+    score -= 120;
+  } else {
+    score += Math.min(torrent.seeders, 20);
+  }
+  
+  const titleWords = trackTitleLower.split(' ').filter(w => w.length > 2);
+  const artistWords = artistLower.split(' ').filter(w => w.length > 2);
+  
+  const hasTitleWords = titleWords.every(word => titleLower.includes(word));
+  const hasArtistWords = artistWords.every(word => titleLower.includes(word));
+  
+  if (!hasTitleWords) score -= 40;
+  if (!hasArtistWords) score -= 30;
+  
+  if (targetFormat === 'flac') {
+    if (titleLower.includes('flac') || titleLower.includes('lossless')) {
+      score += 60;
+    } else if (titleLower.includes('mp3') || titleLower.includes('320')) {
+      score -= 50;
+    }
+  } else {
+    if (titleLower.includes('mp3') || titleLower.includes('320')) {
+      score += 30;
+    } else if (titleLower.includes('flac')) {
+      score -= 20;
+    }
+  }
+  
+  if (!trackTitleLower.includes('live') && (titleLower.includes('live at') || titleLower.includes('live concert') || titleLower.includes(' live '))) {
+    score -= 60;
+  }
+  if (!trackTitleLower.includes('cover') && titleLower.includes('cover') && !titleLower.includes('album cover')) {
+    score -= 60;
+  }
+  
+  return score;
+}
+
+// Find all audio files recursively
+async function findAudioFiles(dir) {
+  let results = [];
+  try {
+    const list = await fs.readdir(dir, { withFileTypes: true });
+    for (const file of list) {
+      const res = path.resolve(dir, file.name);
+      if (file.isDirectory()) {
+        results = results.concat(await findAudioFiles(res));
+      } else {
+        const ext = path.extname(file.name).toLowerCase();
+        if (['.mp3', '.m4a', '.flac', '.wav', '.ogg'].includes(ext)) {
+          results.push(res);
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore read errors
+  }
+  return results;
+}
+
+// Score a single audio file in a downloaded album/folder to find the target track
+async function scoreAudioFile(filePath, track) {
+  let score = 100;
+  const fileNameLower = path.basename(filePath).toLowerCase();
+  const trackTitleLower = track.title.toLowerCase();
+  
+  const duration = await utils.getFileDuration(filePath);
+  if (duration && track.duration) {
+    const diff = Math.abs(duration - track.duration);
+    score -= diff * 3;
+  } else {
+    score -= 50;
+  }
+  
+  const words = trackTitleLower.split(' ').filter(w => w.length > 2);
+  if (words.length > 0) {
+    const matchCount = words.filter(word => fileNameLower.includes(word)).length;
+    score += (matchCount / words.length) * 40;
+  }
+  
+  return score;
+}
+
+// Poller for active downloads
+async function pollActiveDownloads(settings) {
+  const tracks = db.getTracks();
+  const activeTracks = tracks.filter(t => ['snatched', 'downloading'].includes(t.status) && t.torrentHash);
+  
+  if (activeTracks.length === 0) return;
+  
+  console.log(`[Worker] Polling progress for ${activeTracks.length} active torrent downloads...`);
+  const client = utils.getDownloadClient(settings);
+  
+  for (const track of activeTracks) {
+    try {
+      const progressInfo = await client.getProgress(track.torrentHash);
+      if (!progressInfo) {
+        console.warn(`[Worker] Snatched torrent for track "${track.title}" not found in client. Resetting status to wanted.`);
+        await db.updateTrack(track.id, { status: 'wanted', torrentHash: null, error: 'Torrent vanished from client' });
+        continue;
+      }
+      
+      console.log(`[Worker] Track "${track.title}" progress: ${progressInfo.progress}% (${progressInfo.isFinished ? 'Finished' : 'Downloading'})`);
+      
+      if (track.status === 'snatched' && progressInfo.progress > 0) {
+        await db.updateTrack(track.id, { status: 'downloading' });
+      }
+      
+      if (progressInfo.isFinished) {
+        console.log(`[Worker] Torrent finished for track: "${track.title}". Starting post-processing...`);
+        await db.updateTrack(track.id, { status: 'downloaded' });
+        
+        const format = track.targetFormat || settings.audioFormat || 'mp3';
+        const quality = track.targetQuality || settings.audioQuality || '320k';
+        const artistDir = sanitizeFilename(track.artists[0]);
+        const albumDir = sanitizeFilename(track.album);
+        const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
+        const finalFileBase = `${trackNum} - ${sanitizeFilename(track.title)}.${format}`;
+        const destFile = path.join(settings.libraryPath, artistDir, albumDir, finalFileBase);
+        
+        let success = false;
+        
+        if (progressInfo.savePath) {
+          let sourceDir = progressInfo.savePath;
+          if (progressInfo.name) {
+            sourceDir = path.join(progressInfo.savePath, progressInfo.name);
+          }
+          
+          const dirExists = await fs.stat(sourceDir).then(s => s.isDirectory()).catch(() => false);
+          if (!dirExists) {
+            sourceDir = progressInfo.savePath;
+          }
+          
+          console.log(`[Worker] Scanning download directory for audio files: ${sourceDir}`);
+          const audioFiles = await findAudioFiles(sourceDir);
+          
+          if (audioFiles.length === 0) {
+            throw new Error(`No audio files found in downloaded torrent path: ${sourceDir}`);
+          }
+          
+          if (settings.albumDownloadMode === 'single') {
+            const scoredFiles = [];
+            for (const file of audioFiles) {
+              const score = await scoreAudioFile(file, track);
+              scoredFiles.push({ file, score });
+            }
+            scoredFiles.sort((a, b) => b.score - a.score);
+            const bestFile = scoredFiles[0].file;
+            
+            console.log(`[Worker] Selected single track file: "${bestFile}" with score ${scoredFiles[0].score}`);
+            await fs.mkdir(path.dirname(destFile), { recursive: true });
+            await fs.copyFile(bestFile, destFile);
+            success = true;
+          } else {
+            console.log(`[Worker] Album mode: copying all ${audioFiles.length} audio files to album folder...`);
+            const targetAlbumDir = path.join(settings.libraryPath, artistDir, albumDir);
+            await fs.mkdir(targetAlbumDir, { recursive: true });
+            
+            for (const file of audioFiles) {
+              const baseName = path.basename(file);
+              const cleanBaseName = baseName.replace(/[\\/:*?"<>|]/g, '_');
+              const targetPath = path.join(targetAlbumDir, cleanBaseName);
+              await fs.copyFile(file, targetPath);
+            }
+            success = true;
+          }
+        } else {
+          throw new Error('No download save path returned by client');
+        }
+        
+        if (success) {
+          console.log(`[Worker] Tagging file: ${destFile}`);
+          const tagged = await utils.tagAudioFile(destFile, track);
+          
+          await db.updateTrack(track.id, {
+            status: 'imported',
+            filePath: destFile,
+            bitrate: quality,
+            format: format,
+            error: tagged ? null : 'Tagging failed, but audio downloaded'
+          });
+          
+          console.log(`[Worker] Successfully imported: ${destFile}`);
+          
+          const playlists = db.getPlaylists();
+          for (const pl of playlists) {
+            if (pl.trackIds.includes(track.id)) {
+              await regenerateM3UPlaylist(pl);
+            }
+          }
+        }
+        
+        console.log(`[Worker] Removing torrent ${track.torrentHash} from client and cleaning up download files...`);
+        await client.removeTorrent(track.torrentHash, true);
+      }
+    } catch (err) {
+      console.error(`[Worker] Failed to process active torrent download for "${track.title}":`, err.message);
+      await db.updateTrack(track.id, { status: 'failed', error: err.message || 'Torrent processing error' });
+    }
+  }
+}
+
+// Direct YouTube Downloader Helper
+async function downloadDirectFromYouTube(track, settings, format, quality) {
+  try {
+    const artist = track.artists[0];
+    const searchTerms = `${artist} ${track.title}`;
+    const queryText = `${searchTerms} audio`;
+    
+    console.log(`[Worker] Searching YouTube for: "${queryText}"`);
+    const candidates = await utils.searchYouTube(queryText, 5);
+    
+    if (candidates.length === 0) {
+      throw new Error('No candidates found on YouTube');
+    }
+
+    const scored = candidates.map(c => ({
+      candidate: c,
+      score: scoreCandidate(c, track, queryText)
+    })).sort((a, b) => b.score - a.score);
+
+    const bestMatch = scored[0];
+    console.log('[Worker] YouTube search results:');
+    scored.forEach(s => {
+      console.log(`  - [Score: ${s.score}] "${s.candidate.title}" by ${s.candidate.channel} (${s.candidate.duration}s)`);
+    });
+
+    if (bestMatch.score < 20) {
+      console.warn(`[Worker] Best match score is very low (${bestMatch.score}). Falling back to top search result.`);
+    }
+
+    const chosenVideo = bestMatch.candidate;
+    console.log(`[Worker] Selected video: "${chosenVideo.title}" (${chosenVideo.url})`);
+
+    await db.updateTrack(track.id, { status: 'downloading' });
+
+    const artistDir = sanitizeFilename(track.artists[0]);
+    const albumDir = sanitizeFilename(track.album);
+    const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
+    
+    const actualFormat = format === 'flac' ? 'mp3' : format;
+    const actualQuality = format === 'flac' ? '320k' : quality;
+    
+    const fileBase = `${trackNum} - ${sanitizeFilename(track.title)}.${actualFormat}`;
+    const destFile = path.join(settings.libraryPath, artistDir, albumDir, fileBase);
+
+    console.log(`[Worker] Downloading audio to: ${destFile}`);
+    await utils.downloadTrackAudio(chosenVideo.url, destFile, actualFormat, actualQuality);
+
+    await db.updateTrack(track.id, { status: 'downloaded' });
+
+    console.log('[Worker] Tagging file with metadata...');
+    const tagged = await utils.tagAudioFile(destFile, track);
+    
+    await db.updateTrack(track.id, {
+      status: 'imported',
+      filePath: destFile,
+      bitrate: actualQuality,
+      format: actualFormat,
+      error: tagged ? null : 'Tagging failed, but audio downloaded'
+    });
+
+    console.log(`[Worker] Success! Track imported: ${destFile}`);
+
+    const playlists = db.getPlaylists();
+    for (const pl of playlists) {
+      if (pl.trackIds.includes(track.id)) {
+        await regenerateM3UPlaylist(pl);
+      }
+    }
+  } catch (err) {
+    console.error(`[Worker] YouTube direct download failed for track ${track.title}:`, err);
+    await db.updateTrack(track.id, {
+      status: 'failed',
+      error: err.message || 'Unknown direct download error'
+    });
+  }
+}
+
 export async function processQueue() {
   if (isRunning) return;
   isRunning = true;
   console.log('[Worker] Starting queue processor...');
 
   try {
+    const settings = db.getSettings();
+    
+    // 1. First poll active torrent/nzb downloads
+    await pollActiveDownloads(settings);
+    
+    // 2. Process wanted tracks
     const tracks = db.getTracks();
     const wantedTracks = tracks.filter(t => t.status === 'wanted');
     
-    if (wantedTracks.length === 0) {
-      console.log('[Worker] No wanted tracks in queue.');
-      isRunning = false;
-      return;
-    }
-    
-    const settings = db.getSettings();
-    console.log(`[Worker] Found ${wantedTracks.length} tracks to process.`);
+    if (wantedTracks.length > 0) {
+      console.log(`[Worker] Found ${wantedTracks.length} wanted tracks to process.`);
 
-    for (const track of wantedTracks) {
-      console.log(`[Worker] Processing track: ${track.artists.join(', ')} - ${track.title}`);
-      
-      // Update status to snatched
-      await db.updateTrack(track.id, { status: 'snatched', error: null });
-
-      try {
-        // Search YouTube for candidates
-        const artist = track.artists[0];
-        const searchTerms = `${artist} ${track.title}`;
-        const queryText = `${searchTerms} audio`;
+      for (const track of wantedTracks) {
+        console.log(`[Worker] Processing track: ${track.artists.join(', ')} - ${track.title}`);
         
-        console.log(`[Worker] Searching YouTube for: "${queryText}"`);
-        const candidates = await utils.searchYouTube(queryText, 5);
+        const rule = getTrackQualityRule(track, settings);
+        const format = rule ? rule.format : (settings.audioFormat || 'mp3');
+        const quality = rule ? rule.quality : (settings.audioQuality || '320k');
+        const method = settings.downloadMethod || 'direct';
         
-        if (candidates.length === 0) {
-          throw new Error('No candidates found on YouTube');
-        }
-
-        // Score candidates and choose best
-        const scored = candidates.map(c => ({
-          candidate: c,
-          score: scoreCandidate(c, track, queryText)
-        })).sort((a, b) => b.score - a.score);
-
-        const bestMatch = scored[0];
-        console.log('[Worker] Candidate search results:');
-        scored.forEach(s => {
-          console.log(`  - [Score: ${s.score}] "${s.candidate.title}" by ${s.candidate.channel} (${s.candidate.duration}s)`);
-        });
-
-        if (bestMatch.score < 20) {
-          console.warn(`[Worker] Best match score is very low (${bestMatch.score}). Falling back to top search result.`);
-        }
-
-        const chosenVideo = bestMatch.candidate;
-        console.log(`[Worker] Selected video: "${chosenVideo.title}" (${chosenVideo.url})`);
-
-        // Update status to downloading
-        await db.updateTrack(track.id, { status: 'downloading' });
-
-        // Define file path
-        const format = settings.audioFormat || 'mp3';
-        const quality = settings.audioQuality || '320k';
-        
-        const artistDir = sanitizeFilename(track.artists[0]);
-        const albumDir = sanitizeFilename(track.album);
-        
-        // Track number formatting
-        const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
-        const fileBase = `${trackNum} - ${sanitizeFilename(track.title)}.${format}`;
-        
-        const destFile = path.join(settings.libraryPath, artistDir, albumDir, fileBase);
-
-        console.log(`[Worker] Downloading audio to: ${destFile}`);
-        await utils.downloadTrackAudio(chosenVideo.url, destFile, format, quality);
-
-        // Update status to downloaded
-        await db.updateTrack(track.id, { status: 'downloaded' });
-
-        // Write ID3 metadata
-        console.log('[Worker] Tagging file with metadata...');
-        const tagged = await utils.tagAudioFile(destFile, track);
-        
-        // Update track record
-        await db.updateTrack(track.id, {
-          status: 'imported',
-          filePath: destFile,
-          bitrate: quality,
-          format: format,
-          error: tagged ? null : 'Tagging failed, but audio downloaded'
-        });
-
-        console.log(`[Worker] Success! Track imported: ${destFile}`);
-
-        // Regenerate affected playlists
-        const playlists = db.getPlaylists();
-        for (const pl of playlists) {
-          if (pl.trackIds.includes(track.id)) {
-            await regenerateM3UPlaylist(pl);
+        if (method === 'torrent' && settings.prowlarrUrl) {
+          try {
+            await db.updateTrack(track.id, {
+              status: 'snatched',
+              error: null,
+              targetFormat: format,
+              targetQuality: quality
+            });
+            
+            const query = `${track.artists[0]} - ${track.title}`;
+            console.log(`[Worker] Searching torrent indexers for: "${query}"`);
+            const candidates = await utils.searchIndexer(query, settings);
+            
+            if (candidates.length === 0) {
+              throw new Error('No torrent candidates found');
+            }
+            
+            const scored = candidates.map(c => ({
+              candidate: c,
+              score: scoreTorrentCandidate(c, track, format)
+            })).sort((a, b) => b.score - a.score);
+            
+            console.log('[Worker] Torrent candidates results:');
+            scored.forEach(s => {
+              console.log(`  - [Score: ${s.score}] "${s.candidate.title}" (Seeders: ${s.candidate.seeders}, Size: ${(s.candidate.size / (1024*1024)).toFixed(1)}MB, Indexer: ${s.candidate.indexer})`);
+            });
+            
+            const best = scored[0];
+            if (best.score < 20) {
+              console.warn(`[Worker] Best torrent score is very low (${best.score}). Proceeding anyway.`);
+            }
+            
+            const client = utils.getDownloadClient(settings);
+            console.log(`[Worker] Snatched torrent: "${best.candidate.title}" via ${settings.torrentClient}`);
+            
+            const hash = await client.addTorrent(best.candidate.downloadUrl);
+            await db.updateTrack(track.id, {
+              torrentHash: hash || best.candidate.guid || 'mock_hash_' + Math.random().toString(36).substr(2, 9),
+              torrentName: best.candidate.title
+            });
+          } catch (err) {
+            console.error(`[Worker] Failed to snatch torrent for ${track.title}:`, err.message);
+            console.log(`[Worker] Falling back to YouTube direct download for "${track.title}"...`);
+            await downloadDirectFromYouTube(track, settings, format, quality);
           }
+        } else {
+          await downloadDirectFromYouTube(track, settings, format, quality);
         }
-
-      } catch (err) {
-        console.error(`[Worker] Failed to process track ${track.title}:`, err);
-        await db.updateTrack(track.id, {
-          status: 'failed',
-          error: err.message || 'Unknown download error'
-        });
       }
+    } else {
+      console.log('[Worker] No wanted tracks in queue.');
     }
 
-    // Trigger Navidrome library refresh if configured
-    await triggerNavidromeScan();
+    triggerNavidromeScan().catch(err => console.error(err));
 
   } catch (err) {
     console.error('[Worker] Fatal error in queue loop:', err);
@@ -273,3 +536,4 @@ export function stopWorker() {
     console.log('[Worker] Background worker stopped.');
   }
 }
+

@@ -30,17 +30,25 @@ try {
   process.exit(1);
 }
 
-// 3. Verify Deezer Search API
-console.log('\n[3] Testing Deezer Search:');
+// 3. Verify Deezer Search and Spotify Scraper
+console.log('\n[3] Testing APIs:');
 try {
   const results = await utils.searchDeezer('Midnight City M83');
   if (results.length > 0) {
-    console.log(`  - Search: OK (found ${results.length} tracks, top match: "${results[0].title}" by "${results[0].artist}")`);
+    console.log(`  - Deezer Search: OK (found ${results.length} tracks, top match: "${results[0].title}" by "${results[0].artist}")`);
   } else {
-    console.warn('  - Search: Warning (returned empty results, check network connection)');
+    console.warn('  - Deezer Search: Warning (returned empty results)');
   }
 } catch (e) {
-  console.error('  - Search check failed:', e.message);
+  console.error('  - Deezer Search failed:', e.message);
+}
+
+try {
+  const spotifyUrl = 'https://open.spotify.com/playlist/3MM2gTiRZMNKQkje0Vpzpd';
+  const playlist = await utils.parseSpotifyPlaylist(spotifyUrl);
+  console.log(`  - Spotify Embed: OK (parsed ${playlist.length} tracks, first track: "${playlist[0].title}" by "${playlist[0].artist}")`);
+} catch (e) {
+  console.error('  - Spotify Embed failed:', e.message);
 }
 
 // 4. Verify Candidate Scoring
