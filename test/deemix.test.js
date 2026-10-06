@@ -37,6 +37,7 @@ const server = http.createServer(async (req, res) => {
       if (!fake.loggedIn) return send({ result: false, errid: 'NotLoggedIn' });
       const id = json.url.split('/').pop();
       const uuid = `track_${id}_${json.bitrate}`;
+      if (fake.queue[uuid]) return send({ result: true }); // real deemix keeps the old item
       fake.queue[uuid] = { uuid, status: 'inQueue', id, ext: json.bitrate === 9 ? 'flac' : 'mp3' };
       return send({ result: true });
     }
@@ -59,6 +60,7 @@ const server = http.createServer(async (req, res) => {
     case '/api/removeFromQueue':
       fake.removed.push(url.searchParams.get('uuid'));
       delete fake.queue[url.searchParams.get('uuid')];
+      delete fake.polls[url.searchParams.get('uuid')];
       return send({ result: true });
   }
   res.statusCode = 404;
@@ -119,4 +121,36 @@ test('a track deemix cannot deliver falls back to the configured mode', async ()
   // Re-requesting a failed track gives deemix another go.
   const again = await db.addTrack({ id: '999' });
   assert.equal(again.deemixTried, false);
+});
+
+test('moveExtras moves the .lrc, keeps an existing cover, and removes empty deemix dirs', async () => {
+  const deemix = await import('../server/deemix.js');
+  const root = path.join(env.root, 'dl2');
+  const album = path.join(root, 'Queen', 'Jazz (1978)');
+  fs.mkdirSync(album, { recursive: true });
+  const src = path.join(album, "12 - Don't Stop.flac");
+  fs.writeFileSync(src, 'a');
+  fs.writeFileSync(path.join(album, "12 - Don't Stop.lrc"), 'lyrics');
+  fs.writeFileSync(path.join(album, 'cover.jpg'), 'deemix cover');
+  const lib = path.join(env.root, 'lib2');
+  fs.mkdirSync(lib);
+  fs.writeFileSync(path.join(lib, 'cover.jpg'), 'mine');
+  const dest = path.join(lib, '12 - Dont Stop.flac');
+  fs.renameSync(src, dest);
+  await deemix.moveExtras(src, dest, root);
+  assert.equal(fs.readFileSync(path.join(lib, '12 - Dont Stop.lrc'), 'utf8'), 'lyrics');
+  assert.equal(fs.readFileSync(path.join(lib, 'cover.jpg'), 'utf8'), 'mine');
+  assert.ok(fs.existsSync(root), 'the downloads root itself stays');
+  assert.deepEqual(fs.readdirSync(root), []);
+});
+
+test('a stale failed deemix item is removed and re-added on re-request', async () => {
+  fake.removed.length = 0;
+  fake.queue['track_777_9'] = { uuid: 'track_777_9', id: '777', status: 'failed', files: [], errors: [{ message: 'old' }] };
+  fake.polls['track_777_9'] = 5;
+  await db.addTrack({ id: '777', title: 'Again', artists: ['Someone'], album: 'Y', duration: 100 });
+  const t = await runUntilSettled('777');
+  assert.equal(t.status, 'imported');
+  assert.equal(t.source, 'deemix');
+  assert.ok(fake.removed.includes('track_777_9'));
 });

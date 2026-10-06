@@ -3,6 +3,9 @@
 // deemix keeps one Deezer login per HTTP session, so we hold its session cookie
 // and log in with the ARL on demand (Songarr's own, or the one deemix saved).
 
+import fs from 'fs/promises';
+import path from 'path';
+
 const BITRATE = { flac: 9, mp3: 3 }; // deemix codes: 9 FLAC, 3 MP3 320
 
 let session = { url: '', cookie: '' };
@@ -84,4 +87,46 @@ export async function testConnection(settings) {
   const name = user.name ? ` as ${user.name}` : '';
   const lossless = user.can_stream_lossless ? 'FLAC available' : 'no FLAC on this account';
   return `Logged in to Deezer${name} (${lossless})`;
+}
+
+// deemix leaves a synced-lyrics .lrc and a cover.jpg beside each track. Move
+// the .lrc next to the imported file (Navidrome reads it by basename), keep the
+// cover only if the album folder has none, then remove deemix's leftovers and
+// any album/artist dirs that are now empty (never `root` itself). Best effort.
+export async function moveExtras(src, destFile, root) {
+  const srcDir = path.dirname(src);
+  const base = path.basename(src, path.extname(src));
+  try {
+    const lrc = path.join(srcDir, `${base}.lrc`);
+    if (await exists(lrc)) {
+      await copyOrMove(lrc, path.join(path.dirname(destFile), `${path.basename(destFile, path.extname(destFile))}.lrc`));
+    }
+    const cover = path.join(srcDir, 'cover.jpg');
+    if (await exists(cover)) {
+      const destCover = path.join(path.dirname(destFile), 'cover.jpg');
+      if (!(await exists(destCover))) await fs.copyFile(cover, destCover);
+      await fs.rm(cover, { force: true });
+    }
+    let dir = srcDir;
+    const stop = root ? path.resolve(root) : null;
+    while (stop && path.resolve(dir).startsWith(stop + path.sep)) {
+      await fs.rmdir(dir); // throws when not empty, which ends the walk
+      dir = path.dirname(dir);
+    }
+  } catch { /* leftovers are harmless; a non-empty dir ends the walk */ }
+}
+
+async function exists(p) {
+  return fs.access(p).then(() => true, () => false);
+}
+
+export async function copyOrMove(src, dest) {
+  await fs.rm(dest, { force: true });
+  try {
+    await fs.rename(src, dest);
+  } catch (err) {
+    if (err.code !== 'EXDEV') throw err;
+    await fs.copyFile(src, dest);
+    await fs.rm(src, { force: true });
+  }
 }

@@ -478,7 +478,15 @@ function removedFromQueue(track) {
 // so this and later cycles fall through to the torrent/YouTube paths.
 async function startDeemix(track, settings, format) {
   const bitrate = deemix.deemixBitrate(format);
-  const uuid = await deemix.addTrack(settings, track.id, bitrate);
+  let uuid = await deemix.addTrack(settings, track.id, bitrate);
+  // deemix keeps finished/failed items, and a re-add of the same track just
+  // finds the old one. Drop a stale item and add it once more.
+  const item = await deemix.getItem(settings, uuid).catch(() => null);
+  if (item && await deemixItemStale(item, settings)) {
+    console.log(`[Worker] Dropping stale deemix item ${uuid} (${item.status}) and re-adding.`);
+    await deemix.removeItem(settings, uuid);
+    uuid = await deemix.addTrack(settings, track.id, bitrate);
+  }
   console.log(`[Worker] Queued "${track.title}" in deemix (${uuid}).`);
   await db.updateTrack(track.id, {
     status: 'snatched',
@@ -486,6 +494,14 @@ async function startDeemix(track, settings, format) {
     deemixUuid: uuid,
     snatchedAt: new Date().toISOString()
   });
+}
+
+async function deemixItemStale(item, settings) {
+  if (['inQueue', 'downloading'].includes(item.status)) return false;
+  const remote = item.files?.find(f => f.path)?.path;
+  if (!remote) return true; // failed, or finished without a file
+  const local = mapRemotePath(remote, { downloadPathRemote: settings.deemixPathRemote, downloadPathLocal: settings.deemixPathLocal });
+  return !(await fs.access(local).then(() => true, () => false));
 }
 
 async function deemixFailed(track, settings, reason) {
@@ -496,16 +512,7 @@ async function deemixFailed(track, settings, reason) {
 
 // Move a finished file into the library. deemix doesn't seed, so nothing needs
 // the download copy afterwards.
-async function moveFile(src, dest) {
-  await fs.rm(dest, { force: true });
-  try {
-    await fs.rename(src, dest);
-  } catch (err) {
-    if (err.code !== 'EXDEV') throw err;
-    await fs.copyFile(src, dest);
-    await fs.rm(src, { force: true });
-  }
-}
+const moveFile = deemix.copyOrMove;
 
 async function pollDeemix(settings) {
   const tracks = db.getTracks().filter(t => ['snatched', 'downloading'].includes(t.status) && t.deemixUuid);
@@ -541,6 +548,7 @@ async function pollDeemix(settings) {
       const destFile = path.join(targetAlbumDir, `${trackNum} - ${sanitizeFilename(track.title)}${ext}`);
       await fs.mkdir(targetAlbumDir, { recursive: true });
       await moveFile(src, destFile);
+      await deemix.moveExtras(src, destFile, settings.deemixPathLocal);
       // deemix already wrote full Deezer tags; no retagging.
       await db.updateTrack(track.id, {
         status: 'imported',
