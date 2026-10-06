@@ -6,6 +6,7 @@ import * as db from './db.js';
 import * as utils from './utils.js';
 import * as worker from './worker.js';
 import * as musicbrainz from './musicbrainz.js';
+import { getAttention, inboxProblem } from './inbox.js';
 import { isDeezerId } from './musicbrainz.js';
 import { DIST_DIR } from './config.js';
 
@@ -352,7 +353,16 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
   app.post('/api/v1/settings', async (req, res) => {
     try {
       const oldSettings = db.getSettings();
-      const updated = await db.updateSettings(unmaskSecrets(req.body));
+      const incoming = unmaskSecrets(req.body);
+      if (Array.isArray(incoming.inboxPaths)) {
+        incoming.inboxPaths = [...new Set(incoming.inboxPaths.map(p => String(p).trim()).filter(Boolean))];
+        const merged = { ...oldSettings, ...incoming };
+        for (const p of incoming.inboxPaths) {
+          const problem = inboxProblem(p, merged);
+          if (problem) return res.status(400).json({ error: `Inbox ${p}: ${problem}` });
+        }
+      }
+      const updated = await db.updateSettings(incoming);
     
       // If autoDownload status changed, adjust background worker
       if (oldSettings.autoDownload !== updated.autoDownload || oldSettings.downloadInterval !== updated.downloadInterval) {
@@ -365,6 +375,8 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
       res.status(500).json({ error: 'Failed to save settings', details: err.message });
     }
   });
+
+  app.get('/api/v1/inbox', (req, res) => res.json({ attention: getAttention() }));
 
   // Test settings connection
   app.post('/api/v1/settings/test', async (req, res) => {

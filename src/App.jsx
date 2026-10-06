@@ -43,8 +43,12 @@ export default function App() {
     deemixArl: '',
     deemixPathRemote: '',
     deemixPathLocal: '',
+    inboxEnabled: true,
+    inboxPaths: [],
     qualityRules: []
   });
+  const [attention, setAttention] = useState([]);
+  const [newInbox, setNewInbox] = useState('');
   
   const [settingsTab, setSettingsTab] = useState('general');
   const [testingConnection, setTestingConnection] = useState(false);
@@ -124,6 +128,15 @@ export default function App() {
     }
   };
 
+  const fetchAttention = async () => {
+    try {
+      const res = await fetch('/api/v1/inbox');
+      if (res.ok) setAttention((await res.json()).attention || []);
+    } catch (e) {
+      console.error('Failed to fetch inbox status', e);
+    }
+  };
+
   // Fetch settings
   const fetchSettings = async () => {
     try {
@@ -143,10 +156,12 @@ export default function App() {
     fetchTracks();
     fetchPlaylists();
     fetchSettings();
+    fetchAttention();
 
     const interval = setInterval(() => {
       fetchStats();
       fetchTracks();
+      fetchAttention();
     }, 4000); // Poll status/queue every 4 seconds for immediate updates
 
     return () => clearInterval(interval);
@@ -320,7 +335,8 @@ export default function App() {
         alert('Settings saved successfully!');
         fetchSettings();
       } else {
-        alert('Failed to save settings.');
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Failed to save settings.');
       }
     } catch (err) {
       console.error(err);
@@ -584,6 +600,31 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {attention.length > 0 && (
+              <div className="panel">
+                <h2 className="page-title" style={{fontSize: '1.5rem', marginBottom: '1rem'}}>Needs attention ({attention.length})</h2>
+                <span className="form-help" style={{display: 'block', marginBottom: '1rem'}}>Left in the inbox untouched. Fix the tags or remove the file.</span>
+                <div className="table-container">
+                  <table className="queue-table">
+                    <thead>
+                      <tr><th>File</th><th>Problem</th></tr>
+                    </thead>
+                    <tbody>
+                      {attention.map(a => (
+                        <tr key={a.path + a.reason}>
+                          <td style={{wordBreak: 'break-all'}}><code>{a.path}</code></td>
+                          <td>
+                            <span className="badge badge-failed">{a.reason}</span>{' '}
+                            {a.missing ? `missing: ${a.missing.join(', ')}` : a.detail}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="panel">
               <h2 className="page-title" style={{fontSize: '1.5rem', marginBottom: '1.5rem'}}>Recent Activity log</h2>
@@ -1191,6 +1232,48 @@ export default function App() {
                     </div>
 
                     <div style={{marginTop: '2rem'}}>
+                      <h4 style={{fontSize: '1.1rem', marginBottom: '1rem', fontFamily: 'var(--font-family-heading)'}}>Inbox (drop folders)</h4>
+                      <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', gap: '1rem'}}>
+                        <input
+                          type="checkbox"
+                          id="inboxEnabled"
+                          checked={settings.inboxEnabled !== false}
+                          onChange={e => setSettings({...settings, inboxEnabled: e.target.checked})}
+                          style={{width: '20px', height: '20px'}}
+                        />
+                        <div>
+                          <label className="form-label" htmlFor="inboxEnabled" style={{cursor: 'pointer'}}>Import tagged files from these folders</label>
+                          <span className="form-help" style={{display: 'block'}}>Files are moved into the library as Artist/Album (Year)/NN - Title once they stop changing. Untagged files stay put and are listed on the dashboard. Never a torrent download folder.</span>
+                        </div>
+                      </div>
+                      {(settings.inboxPaths || []).map(p => (
+                        <div key={p} style={{display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem'}}>
+                          <code style={{flex: 1}}>{p}</code>
+                          <button type="button" className="btn btn-danger" onClick={() => setSettings({...settings, inboxPaths: settings.inboxPaths.filter(x => x !== p)})}>Remove</button>
+                        </div>
+                      ))}
+                      <div style={{display: 'flex', gap: '0.5rem', marginTop: '0.75rem'}}>
+                        <input
+                          type="text"
+                          className="input-text"
+                          placeholder="e.g. /storage/dls/deemix"
+                          value={newInbox}
+                          onChange={e => setNewInbox(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => {
+                            const p = newInbox.trim();
+                            if (p && !(settings.inboxPaths || []).includes(p)) setSettings({...settings, inboxPaths: [...(settings.inboxPaths || []), p]});
+                            setNewInbox('');
+                          }}
+                        >Add</button>
+                      </div>
+                      <span className="form-help">Save settings to apply; a folder inside the torrent download path is refused.</span>
+                    </div>
+
+                    <div className="form-group" style={{marginTop: '1.5rem'}}>
                       <h4 style={{fontSize: '1.1rem', marginBottom: '1rem', fontFamily: 'var(--font-family-heading)'}}>deemix (Deezer, tried first)</h4>
 
                       <div className="form-group">

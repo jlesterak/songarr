@@ -55,6 +55,10 @@ let db = {
     deemixArl: '',
     deemixPathRemote: '',
     deemixPathLocal: '',
+    // Drop folders: tagged files that land here outside Songarr's own requests
+    // are moved into the library (see inbox.js).
+    inboxEnabled: true,
+    inboxPaths: ['/storage/dls/deemix'],
     qualityRules: [] // array of { id, type, name, format, quality }
   }
 };

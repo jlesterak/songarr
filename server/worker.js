@@ -4,12 +4,13 @@ import * as db from './db.js';
 import * as utils from './utils.js';
 import * as deemix from './deemix.js';
 import { isDeezerId } from './musicbrainz.js';
+import { scanInboxes } from './inbox.js';
 
 let isRunning = false;
 let workerTimeout = null;
 
 // Helper to sanitize filenames
-function sanitizeFilename(name) {
+export function sanitizeFilename(name) {
   return name.replace(/[\\/:*?"<>|]/g, '_');
 }
 
@@ -673,6 +674,11 @@ export async function processQueue() {
     // 1. First poll active torrent/nzb downloads
     await pollActiveDownloads(settings);
     if (settings.deemixUrl) await pollDeemix(settings);
+    try {
+      await scanInboxes(settings);
+    } catch (err) {
+      console.error('[Worker] Inbox scan failed:', err.message);
+    }
     
     // 2. Process wanted tracks
     const tracks = db.getTracks();
