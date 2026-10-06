@@ -4,7 +4,7 @@ import { useTempEnv, quietConsole } from './helpers.js';
 
 const env = useTempEnv();
 quietConsole();
-const { scoreCandidate, scoreTorrentCandidate, mapRemotePath, seedLimitReached, isStalled } = await import('../server/worker.js');
+const { scoreCandidate, scoreTorrentCandidate, mapRemotePath, variantPenalty, seedLimitReached, isStalled } = await import('../server/worker.js');
 const { audioQualityArg, infoHashFromMagnet } = await import('../server/utils.js');
 after(() => env.cleanup());
 
@@ -81,4 +81,14 @@ test('stall check: progress resets the clock; 0 disables it', () => {
   assert.equal(isStalled(t, 5, { stallTimeoutMinutes: 30 }, now), false);
   assert.equal(isStalled({ ...t, lastProgress: 5, lastProgressAt: '2026-10-05T11:45:00Z' }, 5, { stallTimeoutMinutes: 30 }, now), false);
   assert.equal(isStalled(t, 0, { stallTimeoutMinutes: 0 }, now), false);
+});
+
+test('scoring penalises extended/remix variants the request lacks (Wake Me Up)', () => {
+  const t = { title: 'Wake Me Up', artists: ['Avicii'], duration: 247 };
+  const ext = { title: 'Avicii - Wake Me Up (Original Extended Mix) [MP3]', seeders: 15 };
+  const single = { title: 'Avicii - Wake Me Up Single [MP3]', seeders: 22 };
+  assert.ok(scoreTorrentCandidate(single, t, 'mp3') > scoreTorrentCandidate(ext, t, 'mp3'));
+  const yt = c => scoreCandidate(c, t, '');
+  assert.ok(yt({ title: 'Avicii - Wake Me Up', channel: 'Avicii', duration: 247 }) > yt({ title: 'Avicii - Wake Me Up (Extended Mix)', channel: 'Avicii', duration: 369 }));
+  assert.equal(variantPenalty('wake me up (extended mix)', 'wake me up (extended mix)'), 0);
 });

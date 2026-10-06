@@ -67,11 +67,23 @@ async function triggerNavidromeScan() {
   }
 }
 
+// Variants of a song (extended/remix/instrumental...) that the request didn't
+// ask for. Returns the penalty for a candidate title. "Remixed"/"remastered"
+// don't match: they describe the original.
+const VARIANT_RE = /\b(extended|remix|mix|instrumental|acoustic|karaoke|nightcore|sped up|slowed|reverb|8d)\b/g;
+export function variantPenalty(candidateTitle, trackTitle) {
+  const wanted = new Set(trackTitle.toLowerCase().match(VARIANT_RE) || []);
+  const found = new Set(candidateTitle.toLowerCase().match(VARIANT_RE) || []);
+  let penalty = 0;
+  for (const v of found) if (!wanted.has(v)) penalty += 40;
+  return Math.min(penalty, 80);
+}
+
 // Core Matching Logic for YouTube
 export function scoreCandidate(candidate, track, queryText) {
   let score = 100;
   
-  const durationDiff = Math.abs(candidate.duration - track.duration);
+  const durationDiff = candidate.duration > 0 && track.duration > 0 ? Math.abs(candidate.duration - track.duration) : 0;
   if (durationDiff > 30) {
     score -= durationDiff * 2;
   } else {
@@ -107,7 +119,6 @@ export function scoreCandidate(candidate, track, queryText) {
 
   const isLiveRequested = trackTitleLower.includes('live');
   const isCoverRequested = trackTitleLower.includes('cover');
-  const isRemixRequested = trackTitleLower.includes('remix');
 
   if (!isLiveRequested && (titleLower.includes('live at') || titleLower.includes('live concert') || titleLower.includes('live performance') || titleLower.includes(' live '))) {
     score -= 60;
@@ -115,9 +126,7 @@ export function scoreCandidate(candidate, track, queryText) {
   if (!isCoverRequested && titleLower.includes('cover') && !titleLower.includes('album cover')) {
     score -= 60;
   }
-  if (!isRemixRequested && titleLower.includes('remix') && !titleLower.includes('remixed')) {
-    score -= 40;
-  }
+  score -= variantPenalty(titleLower, trackTitleLower);
 
   return score;
 }
@@ -185,7 +194,9 @@ export function scoreTorrentCandidate(torrent, track, targetFormat) {
   if (!trackTitleLower.includes('cover') && titleLower.includes('cover') && !titleLower.includes('album cover')) {
     score -= 60;
   }
-  
+  // Torrent results carry no duration; the variant check stands in for it.
+  score -= variantPenalty(titleLower, trackTitleLower);
+
   return score;
 }
 
