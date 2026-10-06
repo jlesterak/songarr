@@ -105,7 +105,10 @@ export async function moveExtras(src, destFile, root) {
     if (await exists(cover)) {
       const destCover = path.join(path.dirname(destFile), 'cover.jpg');
       if (!(await exists(destCover))) await fs.copyFile(cover, destCover);
-      await fs.rm(cover, { force: true });
+      // Only drop deemix's cover when no other track is left in the folder
+      // (someone may be downloading that album through deemix's own UI).
+      const others = (await fs.readdir(srcDir)).filter(f => f !== 'cover.jpg');
+      if (others.length === 0) await fs.rm(cover, { force: true });
     }
     let dir = srcDir;
     const stop = root ? path.resolve(root) : null;
