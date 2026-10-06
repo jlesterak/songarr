@@ -311,13 +311,6 @@ export default function App() {
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
-      // If user typed Navidrome password, compile token
-      let token = settings.navidromeToken;
-      if (settings.navidromePassword) {
-        // Simple client side md5 is hard without libraries, so we generate on server.
-        // We'll pass password through and let the server generate.
-      }
-      
       const res = await fetch('/api/v1/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1148,7 +1141,7 @@ export default function App() {
                     </div>
 
                     <div className="form-group">
-                      <label className="form-label">Navidrome Password / Subsonic Token</label>
+                      <label className="form-label">Navidrome Password</label>
                       <input 
                         type="password" 
                         className="input-text" 
@@ -1156,7 +1149,7 @@ export default function App() {
                         value={settings.navidromePassword}
                         onChange={e => setSettings({...settings, navidromePassword: e.target.value})}
                       />
-                      <span className="form-help">Your password. Used to verify connection, passwords are encrypted locally.</span>
+                      <span className="form-help">Your Navidrome password. Songarr sends a salted md5 token per request, never the password itself.</span>
                     </div>
                   </div>
                 </div>

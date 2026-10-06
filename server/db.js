@@ -16,7 +16,8 @@ let db = {
     audioFormat: 'mp3',
     audioQuality: '320k', // default to high quality 320kbps
     navidromeUrl: '',
-    navidromeToken: '', // Subsonic hex hash
+    navidromeUsername: '',
+    navidromePassword: '', // the Subsonic token is derived per request (md5(password + random salt))
     spotifyPlaylistUrls: [],
     
     // Phase 2 features

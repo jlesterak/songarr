@@ -4,13 +4,14 @@
 - Public beta 0.1.0 on GitHub (`github.com/jlesterak/songarr`, Jake approved 2026-10-05): watch the first `tests` run and the `publish` run for the `v0.1.0` tag (ghcr.io/jlesterak/songarr:0.1.0). Then decide whether icebox switches from `songarr:local` to the ghcr image.
 
 ## [PENDING]
-- Navidrome scan: needs Jake's Navidrome user + Subsonic token (scan currently "Wrong username or password"); then confirm M3U sync + auto-scan.
+- Navidrome: confirm the scan now succeeds on icebox with the stored admin password (2026-10-06 fix, see COMPLETED), then confirm M3U sync.
 - Skip (or mark imported) tracks already in the library: the first real request on icebox (Khruangbin, Time (You and I)) was already at `music/Khruangbin/Time (You and I) (2020)/`.
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
 - arm64 build (`docker buildx build --platform linux/arm64`) before claiming aarch64 support in the template; publish is amd64-only until then.
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- Navidrome auth fixed (2026-10-06): Songarr sent `t=<empty navidromeToken>&s=songarr` (the UI saved the password in `navidromePassword`, which nothing read; error 40 on every scan). Now `t = md5(password + random salt)` with `s=<salt>` per request (`subsonicAuthParams`), the password is a masked secret, `navidromeToken` is gone, and a refused scan logs Navidrome's message. 45 tests.
 - MusicBrainz fallback (2026-10-06): `server/musicbrainz.js`. For an "artist title" query (artist taken from Deezer's own results) where no result is that artist's track with that exact title, one MusicBrainz recording search (UA `Songarr/<version> ( https://github.com/jlesterak/songarr )`, serialised to 1 req/s, cached 1 h) picks the exact-title recording on the most releases and puts it first with id `mb:<mbid>`. Such tracks skip deemix (`isDeezerId` guard in the worker and `startDeemix`) and use torrent/YouTube. Limit: a title-only query can't be resolved (MusicBrainz has no popularity ranking), so it needs the artist in the query. 44 tests.
 - Scoring (2026-10-06): extended/remix/mix/instrumental/acoustic/karaoke/nightcore/sped up/slowed/reverb/8d variants the requested title lacks cost 40 each (cap 80) in torrent and YouTube scoring; YouTube duration is skipped when unknown (no NaN). Torrent results have no duration, so the variant check stands in. 43 tests.
 - deemix verified live (2026-10-06): Queen "Don't Stop Me Now" (Deezer id 4092329741) imported as a real FLAC (25.9 MB) to `/music/Queen/Jazz (1978)/12 - Dont Stop Me Now.flac`. deemix's `/downloads` is mounted from `/storage/dls/deemix`; Songarr maps `deemixPathRemote=/downloads` -> `deemixPathLocal=/storage/dls/deemix`. Library and downloads are different NFS exports, so the import is a cross-device copy (~30 s for 26 MB). Stale-cookie login fix in 6d9c4d1.

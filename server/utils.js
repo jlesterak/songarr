@@ -879,3 +879,26 @@ export async function testConnections(settings) {
   
   return results;
 }
+
+// Subsonic token auth: t = md5(password + salt) with a fresh random salt s per
+// request, so the password itself never goes over the wire.
+export function subsonicAuthParams(settings, salt = crypto.randomBytes(8).toString('hex')) {
+  return new URLSearchParams({
+    u: settings.navidromeUsername || 'admin',
+    t: crypto.createHash('md5').update(`${settings.navidromePassword || ''}${salt}`).digest('hex'),
+    s: salt,
+    v: '1.16.1',
+    c: 'songarr',
+    f: 'json'
+  });
+}
+
+// Ask Navidrome to scan; throws with Navidrome's own message when it refuses.
+export async function navidromeStartScan(settings) {
+  const base = settings.navidromeUrl.replace(/\/+$/, '');
+  const res = await fetch(`${base}/rest/startScan.view?${subsonicAuthParams(settings)}`, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json())['subsonic-response'];
+  if (body?.status !== 'ok') throw new Error(body?.error?.message || 'scan refused');
+  return body.scanStatus;
+}

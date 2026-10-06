@@ -52,19 +52,11 @@ async function triggerNavidromeScan() {
   if (!settings.navidromeUrl) return;
 
   try {
-    let url = settings.navidromeUrl.replace(/\/$/, '');
     console.log('[Worker] Triggering Navidrome library scan...');
-    
-    const subsonicUrl = `${url}/rest/startScan.view?u=${encodeURIComponent(settings.navidromeUsername || 'admin')}&t=${settings.navidromeToken}&s=songarr&v=1.16.1&c=songarr&f=json`;
-    const res = await fetch(subsonicUrl);
-    if (res.ok) {
-      const data = await res.json();
-      console.log('[Worker] Navidrome scan response:', data);
-    } else {
-      console.error('[Worker] Navidrome scan trigger failed status:', res.status);
-    }
+    const status = await utils.navidromeStartScan(settings);
+    console.log('[Worker] Navidrome scan started', status ? JSON.stringify(status) : '');
   } catch (err) {
-    console.error('[Worker] Failed to trigger Navidrome scan:', err.message);
+    console.error('[Worker] Navidrome scan failed:', err.message);
   }
 }
 

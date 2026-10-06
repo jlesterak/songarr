@@ -51,7 +51,7 @@ export function librarySize(dir) {
 
 // Secrets never leave the server: GET returns a mask, and a mask posted back
 // means "keep the stored value".
-export const SECRET_FIELDS = ['prowlarrApiKey', 'torrentClientPassword', 'navidromeToken', 'deemixArl'];
+export const SECRET_FIELDS = ['prowlarrApiKey', 'torrentClientPassword', 'navidromePassword', 'deemixArl'];
 export const SECRET_MASK = '********';
 
 export function maskSecrets(settings) {

@@ -64,3 +64,13 @@ test('basic auth when configured; healthcheck stays open', async () => {
     server.close();
   }
 });
+
+test('Subsonic auth is md5(password + salt) with the salt sent alongside', async () => {
+  const { subsonicAuthParams } = await import('../server/utils.js');
+  const crypto = await import('crypto');
+  const p = subsonicAuthParams({ navidromeUsername: 'jake', navidromePassword: 'sesame' }, 'abc123');
+  assert.equal(p.get('u'), 'jake');
+  assert.equal(p.get('s'), 'abc123');
+  assert.equal(p.get('t'), crypto.createHash('md5').update('sesameabc123').digest('hex'));
+  assert.notEqual(subsonicAuthParams({ navidromePassword: 'x' }).get('s'), subsonicAuthParams({ navidromePassword: 'x' }).get('s'));
+});
