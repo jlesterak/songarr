@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import * as db from './db.js';
 import * as utils from './utils.js';
 import * as deemix from './deemix.js';
+import { isDeezerId } from './musicbrainz.js';
 
 let isRunning = false;
 let workerTimeout = null;
@@ -488,6 +489,7 @@ function removedFromQueue(track) {
 // deemix: queue the exact Deezer track. A failure marks the track deemixTried
 // so this and later cycles fall through to the torrent/YouTube paths.
 async function startDeemix(track, settings, format) {
+  if (!isDeezerId(track.id)) throw new Error('not a Deezer track');
   const bitrate = deemix.deemixBitrate(format);
   let uuid = await deemix.addTrack(settings, track.id, bitrate);
   // deemix keeps finished/failed items, and a re-add of the same track just
@@ -696,7 +698,7 @@ export async function processQueue() {
         const quality = rule ? rule.quality : (settings.audioQuality || '320k');
         const method = settings.downloadMethod || 'direct';
 
-        if (settings.deemixUrl && !track.deemixTried) {
+        if (settings.deemixUrl && !track.deemixTried && isDeezerId(track.id)) {
           try {
             await startDeemix(track, settings, format);
             continue;

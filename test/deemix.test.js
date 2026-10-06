@@ -154,3 +154,46 @@ test('a stale failed deemix item is removed and re-added on re-request', async (
   assert.equal(t.source, 'deemix');
   assert.ok(fake.removed.includes('track_777_9'));
 });
+
+test('MusicBrainz fallback: original offered with an mb: id, deemix never called for it', async () => {
+  const mbCalls = [];
+  const mb = http.createServer((req, res) => {
+    mbCalls.push({ url: req.url, ua: req.headers['user-agent'] });
+    res.setHeader('Content-Type', 'application/json');
+    const cr = name => [{ name }];
+    res.end(JSON.stringify({ recordings: [
+      { id: 'cover-1', title: 'Somebody That I Used to Know', 'artist-credit': cr('Gotye'), length: 200000, releases: [{ id: 'r0', title: 'Tiny' }] },
+      { id: 'orig-1', title: 'Somebody That I Used to Know', 'artist-credit': cr('Gotye'), length: 244973, 'first-release-date': '2011-07-05',
+        releases: [{ id: 'r1', title: 'Bravo Hits 76', date: '2011', 'release-group': { 'primary-type': 'Album', 'secondary-types': ['Compilation'] } },
+                   { id: 'r2', title: 'Making Mirrors', date: '2011-07-05', 'release-group': { 'primary-type': 'Album', 'secondary-types': [] } }] }
+    ] }));
+  });
+  mb.listen(0, '127.0.0.1');
+  await once(mb, 'listening');
+  process.env.SONGARR_MUSICBRAINZ_URL = `http://127.0.0.1:${mb.address().port}`;
+  const { withFallback } = await import('../server/musicbrainz.js');
+  const remix = { id: '1', artist: 'Gotye', title: 'Somebody That I Used To Know (Dumme Jungs Remix)' };
+  const cover = { id: '2', artist: 'Walk Off The Earth', title: 'Somebody That I Used to Know' };
+  const out = await withFallback('Gotye Somebody That I Used To Know', [remix, cover]);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].id, 'mb:orig-1');
+  assert.equal(out[0].album, 'Making Mirrors');
+  assert.equal(out[0].duration, 245);
+  assert.match(mbCalls[0].ua, /^Songarr\/\d+\.\d+\.\d+ \( https:\/\/github.com\/jlesterak\/songarr \)$/);
+  // a plausible original, or a title-only query, makes no MusicBrainz call
+  const n = mbCalls.length;
+  const real = { id: '3', artist: 'Gotye', title: 'Somebody That I Used To Know (feat. Kimbra)' };
+  assert.equal((await withFallback('Gotye Somebody That I Used To Know', [real, remix])).length, 2);
+  assert.equal((await withFallback('Somebody That I Used To Know', [remix, cover])).length, 2);
+  assert.equal(mbCalls.length, n);
+  mb.close();
+  delete process.env.SONGARR_MUSICBRAINZ_URL;
+
+  // deemix is skipped for the mb: id
+  const calls = fake.removed.length + Object.keys(fake.queue).length;
+  await db.addTrack({ ...out[0] });
+  await worker.processQueue();
+  assert.equal(fake.removed.length + Object.keys(fake.queue).length, calls);
+  assert.ok(!fake.queue['track_mb:orig-1_9']);
+  assert.equal(db.getTrack('mb:orig-1').deemixTried ?? false, false);
+});

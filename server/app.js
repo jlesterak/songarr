@@ -5,6 +5,8 @@ import fs from 'fs/promises';
 import * as db from './db.js';
 import * as utils from './utils.js';
 import * as worker from './worker.js';
+import * as musicbrainz from './musicbrainz.js';
+import { isDeezerId } from './musicbrainz.js';
 import { DIST_DIR } from './config.js';
 
 // Builds the Express app. Callers must `await db.init()` first; starting the
@@ -104,7 +106,7 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     }
   
     try {
-      const results = await utils.searchDeezer(query);
+      const results = await musicbrainz.withFallback(query, await utils.searchDeezer(query));
     
       // Map with existing db status
       const mappedResults = results.map(track => {
@@ -148,7 +150,7 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     try {
       // If we only have basic info, enrich it from Deezer details before adding
       let fullTrackData = { ...trackData };
-      if (!trackData.album || !trackData.albumArt || !trackData.duration || !trackData.releaseDate) {
+      if (isDeezerId(trackData.id) && (!trackData.album || !trackData.albumArt || !trackData.duration || !trackData.releaseDate)) {
         console.log(`[API] Enriching track metadata for ${trackData.title}`);
         const details = await utils.getDeezerTrackDetails(trackData.id);
         if (details) {
