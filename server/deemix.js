@@ -41,7 +41,9 @@ async function call(settings, path, { method = 'GET', body } = {}) {
 export async function login(settings) {
   let arl = settings.deemixArl;
   if (!arl) {
-    // Single-user deemix hands its saved login to a new session.
+    // Single-user deemix hands its saved login to a *new* session only, so drop
+    // any cookie from before the login was saved.
+    session.cookie = '';
     const info = await call(settings, '/connect');
     arl = info.singleUser?.arl;
   }
