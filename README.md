@@ -9,6 +9,7 @@ With Songarr, you can discover a song (via Shazam, streaming, etc.), search it o
 ## Key Features
 
 - 🔍 **Track-First Search**: Search the global Deezer catalog (millions of tracks with high-res cover art) and request single tracks with one click.
+- 💿 **deemix source (optional)**: with a [deemix](https://github.com/bambanah/deemix) instance and a Deezer account, Songarr grabs the exact Deezer track first (FLAC on a paid plan, else MP3 320) and falls back to torrents/YouTube only if that fails. It reuses the login saved in deemix, so the only setting is its URL.
 - 🧠 **Intelligent matching scoring**: Evaluates YouTube search results based on title relevance, artist matching, Topic/official status, and duration differences to find studio-quality audio rather than live performances or bootleg covers.
 - ⚡ **Auto-download & post-processing**: Automatically fetches tracks using `yt-dlp`, converts them to high-quality audio (`mp3` or `m4a`) using static `ffmpeg` builds, tags them with metadata (album art, title, artist, track number, year) using `node-id3`, and moves them to organized library folders: `music/{Artist}/{Album}/{Track} - {Title}.mp3`.
 - 📁 **Navidrome M3U Sync**: Organizes local playlists inside Songarr and compiles Navidrome-compatible `.m3u` files in your library directory.

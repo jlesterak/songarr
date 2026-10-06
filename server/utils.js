@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import crypto from 'crypto';
 import nodeID3 from 'node-id3';
 import { binary, TEMP_DIR } from './config.js';
+import * as deemix from './deemix.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -802,8 +803,17 @@ export function getDownloadClient(settings) {
 export async function testConnections(settings) {
   const results = {
     indexer: { success: false, message: 'Not tested' },
-    downloadClient: { success: false, message: 'Not tested' }
+    downloadClient: { success: false, message: 'Not tested' },
+    deemix: { success: false, message: 'Not tested' }
   };
+
+  if (settings.deemixUrl) {
+    try {
+      results.deemix = { success: true, message: await deemix.testConnection(settings) };
+    } catch (e) {
+      results.deemix = { success: false, message: `Connection failed: ${e.message}` };
+    }
+  }
   
   if (settings.prowlarrUrl) {
     try {

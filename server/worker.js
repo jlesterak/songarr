@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import * as db from './db.js';
 import * as utils from './utils.js';
+import * as deemix from './deemix.js';
 
 let isRunning = false;
 let workerTimeout = null;
@@ -473,6 +474,93 @@ function removedFromQueue(track) {
   return !db.getTrack(track.id);
 }
 
+// deemix: queue the exact Deezer track. A failure marks the track deemixTried
+// so this and later cycles fall through to the torrent/YouTube paths.
+async function startDeemix(track, settings, format) {
+  const bitrate = deemix.deemixBitrate(format);
+  const uuid = await deemix.addTrack(settings, track.id, bitrate);
+  console.log(`[Worker] Queued "${track.title}" in deemix (${uuid}).`);
+  await db.updateTrack(track.id, {
+    status: 'snatched',
+    error: null,
+    deemixUuid: uuid,
+    snatchedAt: new Date().toISOString()
+  });
+}
+
+async function deemixFailed(track, settings, reason) {
+  console.warn(`[Worker] deemix failed for "${track.title}": ${reason}. Falling back.`);
+  await deemix.removeItem(settings, track.deemixUuid).catch(() => {});
+  await db.updateTrack(track.id, { status: 'wanted', deemixUuid: null, deemixTried: true, error: `deemix: ${reason}` });
+}
+
+// Move a finished file into the library. deemix doesn't seed, so nothing needs
+// the download copy afterwards.
+async function moveFile(src, dest) {
+  await fs.rm(dest, { force: true });
+  try {
+    await fs.rename(src, dest);
+  } catch (err) {
+    if (err.code !== 'EXDEV') throw err;
+    await fs.copyFile(src, dest);
+    await fs.rm(src, { force: true });
+  }
+}
+
+async function pollDeemix(settings) {
+  const tracks = db.getTracks().filter(t => ['snatched', 'downloading'].includes(t.status) && t.deemixUuid);
+  for (const track of tracks) {
+    let item;
+    try {
+      item = await deemix.getItem(settings, track.deemixUuid);
+    } catch (err) {
+      console.warn(`[Worker] Couldn't reach deemix for "${track.title}" (${err.message}); will retry.`);
+      continue;
+    }
+    try {
+      if (!item) {
+        await deemixFailed(track, settings, 'item vanished from the deemix queue');
+        continue;
+      }
+      if (item.status === 'inQueue' || item.status === 'downloading') {
+        if (track.status === 'snatched' && item.status === 'downloading') {
+          await db.updateTrack(track.id, { status: 'downloading' });
+        }
+        continue;
+      }
+      const remote = item.files?.find(f => f.path)?.path;
+      if (!remote) {
+        const why = item.errors?.[0]?.message || `status ${item.status}, no file`;
+        await deemixFailed(track, settings, why);
+        continue;
+      }
+      const src = mapRemotePath(remote, { downloadPathRemote: settings.deemixPathRemote, downloadPathLocal: settings.deemixPathLocal });
+      const ext = path.extname(src).toLowerCase();
+      const trackNum = track.trackNumber ? String(track.trackNumber).padStart(2, '0') : '01';
+      const targetAlbumDir = path.join(settings.libraryPath, sanitizeFilename(track.artists[0]), albumFolder(track));
+      const destFile = path.join(targetAlbumDir, `${trackNum} - ${sanitizeFilename(track.title)}${ext}`);
+      await fs.mkdir(targetAlbumDir, { recursive: true });
+      await moveFile(src, destFile);
+      // deemix already wrote full Deezer tags; no retagging.
+      await db.updateTrack(track.id, {
+        status: 'imported',
+        source: 'deemix',
+        filePath: destFile,
+        format: ext.slice(1),
+        bitrate: ext === '.flac' ? 'lossless' : '320k',
+        error: null
+      });
+      await deemix.removeItem(settings, track.deemixUuid).catch(() => {});
+      console.log(`[Worker] Imported from deemix: ${destFile}`);
+      for (const pl of db.getPlaylists()) {
+        if (pl.trackIds.includes(track.id)) await regenerateM3UPlaylist(pl);
+      }
+    } catch (err) {
+      await deemixFailed(track, settings, err.message);
+    }
+  }
+}
+
 async function downloadDirectFromYouTube(track, settings, format, quality) {
   if (removedFromQueue(track)) return;
   try {
@@ -571,6 +659,7 @@ export async function processQueue() {
     
     // 1. First poll active torrent/nzb downloads
     await pollActiveDownloads(settings);
+    if (settings.deemixUrl) await pollDeemix(settings);
     
     // 2. Process wanted tracks
     const tracks = db.getTracks();
@@ -587,6 +676,16 @@ export async function processQueue() {
         const format = rule ? rule.format : (settings.audioFormat || 'mp3');
         const quality = rule ? rule.quality : (settings.audioQuality || '320k');
         const method = settings.downloadMethod || 'direct';
+
+        if (settings.deemixUrl && !track.deemixTried) {
+          try {
+            await startDeemix(track, settings, format);
+            continue;
+          } catch (err) {
+            console.warn(`[Worker] deemix couldn't take "${track.title}": ${err.message}. Falling back.`);
+            await db.updateTrack(track.id, { deemixTried: true, error: `deemix: ${err.message}` });
+          }
+        }
         
         if (method === 'torrent' && settings.prowlarrUrl) {
           try {

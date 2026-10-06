@@ -1,0 +1,85 @@
+// deemix (github.com/bambanah/deemix) as a download source. Songarr's track
+// ids are Deezer ids, so deemix fetches the exact track: no search, no scoring.
+// deemix keeps one Deezer login per HTTP session, so we hold its session cookie
+// and log in with the ARL on demand (Songarr's own, or the one deemix saved).
+
+const BITRATE = { flac: 9, mp3: 3 }; // deemix codes: 9 FLAC, 3 MP3 320
+
+let session = { url: '', cookie: '' };
+
+export function deemixBitrate(format) {
+  return format === 'flac' ? BITRATE.flac : BITRATE.mp3;
+}
+
+// deemix names queue items deterministically, so a re-add finds the same item.
+export function deemixUuid(trackId, bitrate) {
+  return `track_${trackId}_${bitrate}`;
+}
+
+function baseUrl(settings) {
+  return settings.deemixUrl.replace(/\/+$/, '');
+}
+
+async function call(settings, path, { method = 'GET', body } = {}) {
+  const url = baseUrl(settings);
+  if (session.url !== url) session = { url, cookie: '' };
+  const headers = {};
+  if (session.cookie) headers.Cookie = session.cookie;
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(`${url}/api${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30000)
+  });
+  const setCookie = res.headers.get('set-cookie');
+  if (setCookie) session.cookie = setCookie.split(';')[0];
+  if (!res.ok) throw new Error(`deemix ${path}: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function login(settings) {
+  let arl = settings.deemixArl;
+  if (!arl) {
+    // Single-user deemix hands its saved login to a new session.
+    const info = await call(settings, '/connect');
+    arl = info.singleUser?.arl;
+  }
+  if (!arl) throw new Error('No Deezer ARL: log in to deemix once, or set one in Songarr');
+  const r = await call(settings, '/loginArl', { method: 'POST', body: { arl } });
+  if (r.status === -1) throw new Error('Deezer is not available from deemix (region?)');
+  if (![1, 2, 3].includes(r.status)) throw new Error('Deezer rejected the ARL (expired?)');
+  return r.user || {};
+}
+
+// Queue a Deezer track in deemix; returns its queue uuid.
+export async function addTrack(settings, trackId, bitrate) {
+  const body = { url: `https://www.deezer.com/track/${trackId}`, bitrate };
+  let r = await call(settings, '/addToQueue', { method: 'POST', body });
+  if (!r.result && r.errid === 'NotLoggedIn') {
+    await login(settings);
+    r = await call(settings, '/addToQueue', { method: 'POST', body });
+  }
+  if (!r.result) {
+    if (r.errid === 'CantStream') throw new Error(`Deezer account can't stream bitrate ${bitrate}`);
+    throw new Error(`deemix refused the track (${r.errid || 'unknown error'})`);
+  }
+  return deemixUuid(trackId, bitrate);
+}
+
+// The queue item, or null when deemix no longer has it.
+export async function getItem(settings, uuid) {
+  const q = await call(settings, '/getQueue');
+  return q.queue?.[uuid] || null;
+}
+
+export async function removeItem(settings, uuid) {
+  await call(settings, `/removeFromQueue?uuid=${encodeURIComponent(uuid)}`, { method: 'POST' });
+}
+
+export async function testConnection(settings) {
+  const user = await login(settings);
+  const name = user.name ? ` as ${user.name}` : '';
+  const lossless = user.can_stream_lossless ? 'FLAC available' : 'no FLAC on this account';
+  return `Logged in to Deezer${name} (${lossless})`;
+}

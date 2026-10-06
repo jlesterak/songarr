@@ -47,6 +47,13 @@ let db = {
     // after maxTorrentAttempts dead ones, YouTube.
     stallTimeoutMinutes: 30,
     maxTorrentAttempts: 3,
+    // deemix (Deezer, FLAC with a paid account) is tried first when its URL is
+    // set. No ARL here means use the one deemix has saved. Path mapping as for
+    // the torrent client: deemix's download path -> where Songarr sees it.
+    deemixUrl: '',
+    deemixArl: '',
+    deemixPathRemote: '',
+    deemixPathLocal: '',
     qualityRules: [] // array of { id, type, name, format, quality }
   }
 };
@@ -85,7 +92,7 @@ export async function init() {
   let recovered = false;
   db.tracks.forEach(track => {
     if (!['snatched', 'downloading', 'downloaded'].includes(track.status)) return;
-    if (track.torrentHash) {
+    if (track.torrentHash || track.deemixUuid) {
       if (track.status === 'downloaded') {
         track.status = 'downloading';
         recovered = true;
@@ -145,6 +152,7 @@ export async function addTrack(trackData) {
     if (existing.status === 'failed' || existing.status === 'none') {
       existing.status = 'wanted';
       existing.error = null;
+      existing.deemixTried = false;
       existing.createdAt = new Date().toISOString();
       await save();
       return existing;
@@ -154,7 +162,7 @@ export async function addTrack(trackData) {
 
   // Lifecycle fields belong to the server: a client posting a search result
   // as-is (status 'none') must not stop the track from being queued.
-  const { status, error, createdAt, filePath, torrentHash, ...metadata } = trackData;
+  const { status, error, createdAt, filePath, torrentHash, deemixUuid, deemixTried, ...metadata } = trackData;
   const track = {
     id: trackData.id,
     title: trackData.title,

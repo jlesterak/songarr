@@ -39,6 +39,10 @@ export default function App() {
     stallTimeoutMinutes: 30,
     maxTorrentAttempts: 3,
     importMode: 'hardlink',
+    deemixUrl: '',
+    deemixArl: '',
+    deemixPathRemote: '',
+    deemixPathLocal: '',
     qualityRules: []
   });
   
@@ -1191,6 +1195,70 @@ export default function App() {
                         <option value="album">Keep Entire Album (Save all torrent audio files)</option>
                       </select>
                       <span className="form-help">Controls folder behavior when snatching multi-file releases.</span>
+                    </div>
+
+                    <div style={{marginTop: '2rem'}}>
+                      <h4 style={{fontSize: '1.1rem', marginBottom: '1rem', fontFamily: 'var(--font-family-heading)'}}>deemix (Deezer, tried first)</h4>
+
+                      <div className="form-group">
+                        <label className="form-label">deemix URL (blank = off)</label>
+                        <input
+                          type="url"
+                          className="input-text"
+                          placeholder="e.g. http://deemix:6595"
+                          value={settings.deemixUrl}
+                          onChange={e => setSettings({...settings, deemixUrl: e.target.value})}
+                        />
+                        <span className="form-help">Downloads the exact Deezer track (FLAC when the format is FLAC, else MP3 320). If deemix fails, the mode above takes over.</span>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Deezer ARL (optional)</label>
+                        <input
+                          type="password"
+                          className="input-text"
+                          placeholder="Blank: use the login saved in deemix"
+                          value={settings.deemixArl}
+                          onChange={e => setSettings({...settings, deemixArl: e.target.value})}
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">deemix Path Mapping (optional)</label>
+                        <input
+                          type="text"
+                          className="input-text"
+                          placeholder="deemix path, e.g. /downloads"
+                          value={settings.deemixPathRemote}
+                          onChange={e => setSettings({...settings, deemixPathRemote: e.target.value})}
+                        />
+                        <input
+                          type="text"
+                          className="input-text"
+                          style={{marginTop: '0.5rem'}}
+                          placeholder="Same folder as Songarr sees it"
+                          value={settings.deemixPathLocal}
+                          onChange={e => setSettings({...settings, deemixPathLocal: e.target.value})}
+                        />
+                        <span className="form-help">Files are moved from deemix's download folder into the library, so it must be mounted in Songarr too.</span>
+                      </div>
+
+                      {settings.deemixUrl && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{width: '100%', padding: '0.8rem'}}
+                          onClick={handleTestConnections}
+                          disabled={testingConnection}
+                        >
+                          {testingConnection ? <span className="spinner"></span> : '🔍'} Test deemix
+                        </button>
+                      )}
+                      {testResults?.deemix && settings.deemixUrl && (
+                        <p style={{fontSize: '0.75rem', marginTop: '0.5rem'}} className={testResults.deemix.success ? 'test-result-success' : 'test-result-failed'}>
+                          {testResults.deemix.message}
+                        </p>
+                      )}
                     </div>
 
                     {settings.downloadMethod === 'torrent' && (
