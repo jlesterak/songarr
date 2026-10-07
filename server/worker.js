@@ -22,14 +22,21 @@ export function albumFolder(track) {
   return /^\d{4}$/.test(year) ? `${album} (${year})` : album;
 }
 
+export function m3uPath(name) {
+  return path.join(db.getSettings().libraryPath, 'Playlists', `${sanitizeFilename(name)}.m3u`);
+}
+
+// Removes only the playlist file, never any music.
+export async function removeM3U(name) {
+  await fs.unlink(m3uPath(name)).catch(() => {});
+}
+
 // Generate M3U playlist file
-async function regenerateM3UPlaylist(playlist) {
+export async function regenerateM3UPlaylist(playlist) {
   try {
-    const settings = db.getSettings();
-    const playlistDir = path.join(settings.libraryPath, 'Playlists');
+    const m3uFile = m3uPath(playlist.name);
+    const playlistDir = path.dirname(m3uFile);
     await fs.mkdir(playlistDir, { recursive: true });
-    
-    const m3uFile = path.join(playlistDir, `${sanitizeFilename(playlist.name)}.m3u`);
     let content = '#EXTM3U\n\n';
     
     for (const track of playlist.tracks) {

@@ -18,7 +18,8 @@ let db = {
     navidromeUrl: '',
     navidromeUsername: '',
     navidromePassword: '', // the Subsonic token is derived per request (md5(password + random salt))
-    spotifyPlaylistUrls: [],
+    // Hours between re-syncs of playlists imported from Spotify; 0 = off.
+    playlistSyncHours: 24,
     
     // Phase 2 features
     downloadMethod: 'direct', // 'direct' or 'torrent'
@@ -82,6 +83,7 @@ export async function init() {
       playlists: parsed.playlists || [],
       settings: { ...db.settings, ...(parsed.settings || {}) }
     };
+    delete db.settings.spotifyPlaylistUrls; // replaced by linked playlists
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.error('Error loading database:', err);
@@ -224,18 +226,46 @@ export function getPlaylists() {
   });
 }
 
-export async function createPlaylist(name, description = '') {
+// Playlist names are unique (case-insensitively, since the M3U file is named
+// after them): a clash gets " (2)", " (3)"...
+function uniqueName(name, exceptId = null) {
+  const taken = new Set(db.playlists.filter(p => p.id !== exceptId).map(p => p.name.toLowerCase()));
+  let candidate = name;
+  for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${name} (${n})`;
+  return candidate;
+}
+
+export async function createPlaylist(name, description = '', extra = {}) {
   const playlist = {
     id: 'pl_' + Math.random().toString(36).substr(2, 9),
-    name,
+    name: uniqueName(name.trim()),
     description,
     trackIds: [],
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...extra
   };
   
   db.playlists.push(playlist);
   await save();
   return playlist;
+}
+
+// Playlist linked to a Spotify playlist id, if any.
+export function findPlaylistBySource(sourceId) {
+  return db.playlists.find(p => p.sourceId === sourceId) || null;
+}
+
+// Merges fields into a playlist. A rename keeps names unique; returns
+// { playlist, oldName } so the caller can move the M3U.
+export async function updatePlaylist(id, patch) {
+  const playlist = db.playlists.find(p => p.id === id);
+  if (!playlist) return null;
+  const oldName = playlist.name;
+  const { id: _id, ...fields } = patch;
+  if (typeof fields.name === 'string') fields.name = uniqueName(fields.name.trim() || oldName, id);
+  Object.assign(playlist, fields);
+  await save();
+  return { playlist, oldName };
 }
 
 export async function deletePlaylist(id) {

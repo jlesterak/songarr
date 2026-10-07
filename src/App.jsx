@@ -407,6 +407,30 @@ export default function App() {
     }
   };
 
+  const handleSyncPlaylist = async (playlistId) => {
+    try {
+      await fetch(`/api/v1/playlists/${playlistId}/sync`, { method: 'POST' });
+      setTimeout(fetchPlaylists, 3000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRenamePlaylist = async (pl) => {
+    const name = prompt('Rename playlist', pl.name);
+    if (!name || !name.trim() || name === pl.name) return;
+    try {
+      const res = await fetch(`/api/v1/playlists/${pl.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      if (res.ok) fetchPlaylists();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Batch import handlers
   const handleTextImport = async () => {
     if (!textImport.trim()) return;
@@ -921,11 +945,37 @@ export default function App() {
                     <p style={{fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.5rem'}}>
                       📢 Navidrome-compatible M3U generated at: <code>{settings.libraryPath}/Playlists/{selectedPlaylist.name.replace(/[\\/:*?"<>|]/g, '_')}.m3u</code>
                     </p>
+                    {selectedPlaylist.sourceUrl && (
+                      <p style={{fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.5rem'}}>
+                        🔗 Linked to <a href={selectedPlaylist.sourceUrl} target="_blank" rel="noreferrer">{selectedPlaylist.sourceName || selectedPlaylist.sourceUrl}</a>
+                        {' · '}last synced {selectedPlaylist.lastSyncedAt ? new Date(selectedPlaylist.lastSyncedAt).toLocaleString() : 'never'}
+                        {selectedPlaylist.lastSyncError && <span style={{color: 'var(--color-danger, #e55)'}}> · last sync failed: {selectedPlaylist.lastSyncError}</span>}
+                      </p>
+                    )}
                   </div>
-                  <button className="btn btn-danger" onClick={() => handleDeletePlaylist(selectedPlaylist.id)}>
-                    🗑️ Delete Playlist
-                  </button>
+                  <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
+                    {selectedPlaylist.sourceUrl && (
+                      <button className="btn btn-secondary" onClick={() => handleSyncPlaylist(selectedPlaylist.id)}>
+                        🔄 Sync now
+                      </button>
+                    )}
+                    <button className="btn btn-secondary" onClick={() => handleRenamePlaylist(selectedPlaylist)}>
+                      ✏️ Rename
+                    </button>
+                    <button className="btn btn-danger" onClick={() => handleDeletePlaylist(selectedPlaylist.id)}>
+                      🗑️ Delete Playlist
+                    </button>
+                  </div>
                 </div>
+
+                {selectedPlaylist.unmatched?.length > 0 && (
+                  <div className="panel" style={{marginBottom: '2rem'}}>
+                    <h3 style={{fontSize: '1.1rem', marginBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>Couldn't match ({selectedPlaylist.unmatched.length})</h3>
+                    <ul style={{fontSize: '0.85rem', color: 'var(--color-text-secondary)', paddingLeft: '1.2rem'}}>
+                      {selectedPlaylist.unmatched.map((u, i) => <li key={i}>{u}</li>)}
+                    </ul>
+                  </div>
+                )}
 
                 <div className="panel">
                   <h3 style={{fontSize: '1.25rem', marginBottom: '1rem', fontFamily: 'var(--font-family-heading)'}}>Playlist Tracks</h3>
@@ -986,7 +1036,7 @@ export default function App() {
             <div className="panel">
               <h2 className="page-title" style={{fontSize: '1.5rem', marginBottom: '1.5rem'}}>Spotify Playlist Sync</h2>
               <p style={{color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
-                Paste the URL of any public Spotify playlist. Songarr will parse the playlist embed and search the Deezer catalog for match matching metadata, importing found tracks into the queue.
+                Paste the URL of any public Spotify playlist. Songarr creates a linked playlist, matches each track to the best Deezer result (MusicBrainz when Deezer only has remixes) and queues it. Importing the same URL again just re-syncs it; tracks dropped from Spotify leave the playlist but stay in your library.
               </p>
               
               <div className="form-group">
@@ -1147,6 +1197,16 @@ export default function App() {
                         />
                       </div>
                     )}
+                    <div className="form-group" style={{marginTop: '1rem'}}>
+                      <label className="form-label">Re-sync Spotify Playlists Every (Hours, 0 = off)</label>
+                      <input
+                        type="number"
+                        className="input-text"
+                        min="0"
+                        value={settings.playlistSyncHours ?? 24}
+                        onChange={e => setSettings({...settings, playlistSyncHours: Math.max(0, parseInt(e.target.value) || 0)})}
+                      />
+                    </div>
                   </div>
 
                   {/* Right Column: Navidrome Integration */}

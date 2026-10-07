@@ -105,17 +105,23 @@ function findTracksRecursively(obj) {
 
 // === SPOTIFY PLAYLIST EMBED SCRAPER ===
 // This allows scraping public Spotify playlist tracks without developer API credentials.
+// Playlist id from a Spotify URL (any query string, locale prefix or trailing
+// slash) or a bare id; null when it is neither.
+export function spotifyPlaylistId(urlOrId) {
+  const s = String(urlOrId || '').trim();
+  const m = s.match(/playlist\/([a-zA-Z0-9]+)/) || s.match(/^spotify:playlist:([a-zA-Z0-9]+)$/) || s.match(/^([a-zA-Z0-9]{10,})$/);
+  return m ? m[1] : null;
+}
+
 export async function parseSpotifyPlaylist(playlistUrlOrId) {
+  return (await fetchSpotifyPlaylist(playlistUrlOrId)).tracks;
+}
+
+// { id, name, tracks } for a public Spotify playlist (name may be '').
+export async function fetchSpotifyPlaylist(playlistUrlOrId) {
   try {
-    let playlistId = playlistUrlOrId;
-    if (playlistUrlOrId.includes('spotify.com')) {
-      const match = playlistUrlOrId.match(/playlist\/([a-zA-Z0-9]+)/);
-      if (match) {
-        playlistId = match[1];
-      } else {
-        throw new Error('Invalid Spotify playlist URL format');
-      }
-    }
+    const playlistId = spotifyPlaylistId(playlistUrlOrId);
+    if (!playlistId) throw new Error('Invalid Spotify playlist URL format');
     
     const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
     const response = await fetch(embedUrl, {
@@ -141,7 +147,7 @@ export async function parseSpotifyPlaylist(playlistUrlOrId) {
           fallbackTracks.push({ title, artist });
         }
       }
-      if (fallbackTracks.length > 0) return fallbackTracks;
+      if (fallbackTracks.length > 0) return { id: playlistId, name: '', tracks: fallbackTracks };
       throw new Error('Could not find NEXT_DATA script in Spotify embed page');
     }
     
@@ -152,7 +158,9 @@ export async function parseSpotifyPlaylist(playlistUrlOrId) {
       throw new Error('No tracks found in playlist data structure');
     }
     
-    return items.map(item => {
+    const entity = state?.props?.pageProps?.state?.data?.entity;
+    const name = String(entity?.name || entity?.title || '').trim();
+    const tracks = items.map(item => {
       const title = item.title || item.name;
       const artist = item.subtitle || (item.artists && item.artists[0]?.name) || item.artist?.name || 'Unknown Artist';
       const artists = item.artists ? (Array.isArray(item.artists) ? item.artists.map(a => a.name || a) : [item.artists]) : [artist];
@@ -165,6 +173,7 @@ export async function parseSpotifyPlaylist(playlistUrlOrId) {
         spotifyId: item.id || item.uri
       };
     });
+    return { id: playlistId, name, tracks };
   } catch (err) {
     console.error('Spotify playlist parsing failed:', err);
     throw err;

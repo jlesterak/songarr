@@ -5,6 +5,7 @@ import fs from 'fs/promises';
 import * as db from './db.js';
 import * as utils from './utils.js';
 import * as worker from './worker.js';
+import * as sync from './sync.js';
 import * as musicbrainz from './musicbrainz.js';
 import { getAttention, inboxProblem } from './inbox.js';
 import { isDeezerId } from './musicbrainz.js';
@@ -238,45 +239,21 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     })();
   });
 
-  // 8. Spotify playlist import
+  // 8. Spotify playlist import: creates (or reuses) the linked playlist, then
+  // matches and queues in the background. Importing a URL again is a re-sync.
   app.post('/api/v1/tracks/import-playlist', async (req, res) => {
     const { playlistUrl } = req.body;
     if (!playlistUrl) return res.status(400).json({ error: 'Spotify playlist URL is required' });
   
     try {
-      console.log(`[API Import] Parsing Spotify playlist: ${playlistUrl}`);
-      const parsedTracks = await utils.parseSpotifyPlaylist(playlistUrl);
-    
-      res.json({ 
-        success: true, 
-        message: `Successfully parsed ${parsedTracks.length} tracks. Starting search and queue add in background.`,
-        count: parsedTracks.length
+      const { playlist, source } = await sync.linkPlaylist(playlistUrl);
+      res.json({
+        success: true,
+        message: `Playlist "${playlist.name}": ${source.tracks.length} tracks. Matching and queuing in the background.`,
+        count: source.tracks.length,
+        playlistId: playlist.id
       });
-    
-      // Process matching in the background
-      (async () => {
-        let imported = 0;
-        for (const track of parsedTracks) {
-          try {
-            const query = `${track.artist} - ${track.title}`;
-            console.log(`[API Import] Matching playlist track: "${query}"`);
-            const results = await utils.searchDeezer(query);
-          
-            if (results.length > 0) {
-              // Find a good match (exact or close title match)
-              const match = results[0];
-              const details = await utils.getDeezerTrackDetails(match.id);
-              await db.addTrack(details || match);
-              imported++;
-            }
-          } catch (e) {
-            console.error(`[API Import] Failed to import Spotify track: ${track.artist} - ${track.title}`, e.message);
-          }
-        }
-        console.log(`[API Import] Playlist import finished. Snatched ${imported} out of ${parsedTracks.length} tracks.`);
-        worker.processQueue().catch(err => console.error(err));
-      })();
-    
+      sync.syncPlaylist(playlist.id, source).catch(err => console.error('[API Import]', err.message));
     } catch (err) {
       res.status(500).json({ error: 'Playlist import failed', details: err.message });
     }
@@ -303,17 +280,38 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
       const deleted = await db.deletePlaylist(req.params.id);
       if (!deleted) return res.status(404).json({ error: 'Playlist not found' });
     
-      // Also remove the physical M3U file if it exists
-      const settings = db.getSettings();
-      const m3uFile = path.join(settings.libraryPath, 'Playlists', `${deleted.name.replace(/[\\/:*?"<>|]/g, '_')}.m3u`);
-      try {
-        await fs.unlink(m3uFile);
-      } catch (e) {}
+      await worker.removeM3U(deleted.name);
 
       res.json({ success: true, deleted });
     } catch (err) {
       res.status(500).json({ error: 'Failed to delete playlist', details: err.message });
     }
+  });
+
+  // Rename (the M3U follows) and/or edit the description.
+  app.patch('/api/v1/playlists/:id', async (req, res) => {
+    try {
+      const { name, description } = req.body;
+      const patch = {};
+      if (typeof name === 'string' && name.trim()) patch.name = name;
+      if (typeof description === 'string') patch.description = description;
+      const done = await db.updatePlaylist(req.params.id, patch);
+      if (!done) return res.status(404).json({ error: 'Playlist not found' });
+      if (done.playlist.name !== done.oldName) await worker.removeM3U(done.oldName);
+      await worker.regenerateM3UPlaylist(db.getPlaylists().find(p => p.id === req.params.id));
+      res.json(done.playlist);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to update playlist', details: err.message });
+    }
+  });
+
+  // "Sync now" for a linked playlist; runs in the background.
+  app.post('/api/v1/playlists/:id/sync', (req, res) => {
+    const pl = db.getPlaylists().find(p => p.id === req.params.id);
+    if (!pl) return res.status(404).json({ error: 'Playlist not found' });
+    if (!pl.sourceId) return res.status(400).json({ error: 'Playlist is not linked to a Spotify playlist' });
+    sync.syncPlaylist(pl.id).catch(err => console.error('[API Sync]', err.message));
+    res.status(202).json({ success: true, message: 'Sync started' });
   });
 
   app.post('/api/v1/playlists/:id/tracks', async (req, res) => {
