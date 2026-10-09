@@ -1,7 +1,7 @@
 # Songarr TODO
 
 ## [IN PROGRESS]
-- Public beta 0.1.0 on GitHub (`github.com/jlesterak/songarr`, Jake approved 2026-10-05): watch the first `tests` run and the `publish` run for the `v0.1.0` tag (ghcr.io/jlesterak/songarr:0.1.0). Then decide whether icebox switches from `songarr:local` to the ghcr image.
+- [DONE 2026-10-09] Public beta: v0.2.1 published (tests + publish green; v0.2.0's publish failed, 0.2.1 replaced it); icebox runs `ghcr.io/jlesterak/songarr:latest`.
 
 ## [PENDING]
 - Navidrome: scan confirmed working on icebox (2026-10-06); still to confirm M3U sync.
