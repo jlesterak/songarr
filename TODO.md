@@ -48,5 +48,5 @@
 - 2026-10-09: icebox override now has `pull_policy: never` for `songarr:local` (pulls printed "pull access denied"; backup
   docker-compose.override.yml.bak-20261009). Clean fix later: release v0.2.0 to GHCR (needs Jake) and switch icebox to the public image.
 
-- 2026-10-09: v0.2.0 released (Jake approved): drop-folder importer, linked Spotify playlists, Navidrome scan fix, deemix fixes,
+- 2026-10-09: v0.2.0 tagged but its publish failed on a save race (fixed in 0.2.1, no image for 0.2.0). v0.2.1 (Jake approved 0.2.0): drop-folder importer, linked Spotify playlists, Navidrome scan fix, deemix fixes,
   MusicBrainz fallback. icebox switches to ghcr.io/jlesterak/songarr:latest so `ds -yc` (up --pull always) stops failing on songarr:local.
