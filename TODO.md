@@ -49,4 +49,4 @@
   docker-compose.override.yml.bak-20261009). Clean fix later: release v0.2.0 to GHCR (needs Jake) and switch icebox to the public image.
 
 - 2026-10-09: v0.2.0 tagged but its publish failed on a save race (fixed in 0.2.1, no image for 0.2.0). v0.2.1 (Jake approved 0.2.0): drop-folder importer, linked Spotify playlists, Navidrome scan fix, deemix fixes,
-  MusicBrainz fallback. icebox switches to ghcr.io/jlesterak/songarr:latest so `ds -yc` (up --pull always) stops failing on songarr:local.
+  MusicBrainz fallback. icebox switched to ghcr.io/jlesterak/songarr:latest 2026-10-09 (healthy; pull_policy removed; backup override .bak-20261009b), so `ds -yc` (up --pull always) no longer fails.
