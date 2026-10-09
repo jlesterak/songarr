@@ -44,3 +44,6 @@
 - Track-first search (Deezer), YouTube match scoring, yt-dlp/ffmpeg download + ID3 tagging, library layout.
 - Navidrome M3U sync and scan webhook; Spotify playlist / plain-text import.
 - Rescued from the Gemini antigravity scratch dir to `~/songarr` with an icebox remote (2026-10-04).
+
+- 2026-10-09: icebox override now has `pull_policy: never` for `songarr:local` (pulls printed "pull access denied"; backup
+  docker-compose.override.yml.bak-20261009). Clean fix later: release v0.2.0 to GHCR (needs Jake) and switch icebox to the public image.
