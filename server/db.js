@@ -64,8 +64,17 @@ let db = {
   }
 };
 
-// Atomically save DB to disk
-async function save() {
+// Atomically save DB to disk. Saves run one at a time: two overlapping saves
+// used to share one temp file, and the second rename failed with ENOENT.
+let saving = Promise.resolve();
+
+function save() {
+  const run = saving.then(writeDb, writeDb);
+  saving = run.catch(() => {});
+  return run;
+}
+
+async function writeDb() {
   await fs.mkdir(DB_DIR, { recursive: true });
   const tempFile = `${DB_FILE}.tmp`;
   await fs.writeFile(tempFile, JSON.stringify(db, null, 2), 'utf-8');
