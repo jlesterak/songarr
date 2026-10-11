@@ -265,6 +265,41 @@ function keepsSeeding(settings) {
   return settings.seedAfterImport !== false && settings.torrentClient !== 'sabnzbd';
 }
 
+const AUDIO_EXTS = ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.opus'];
+const isLossless = file => ['.flac', '.wav'].includes(path.extname(file).toLowerCase());
+const normName = s => String(s).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+// The track's file if the library already has it in the album folder Songarr
+// would use: "Title", "04 - Title", "1-04 Title", "Artist - Album - 04 - Title",
+// any audio extension, lossless preferred. Other folder layouts are missed.
+export async function findInLibrary(track, settings) {
+  const dir = path.join(settings.libraryPath, sanitizeFilename(track.artists[0]), albumFolder(track));
+  let names;
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  const want = normName(track.title);
+  const matches = names.filter(name => {
+    const ext = path.extname(name).toLowerCase();
+    if (!AUDIO_EXTS.includes(ext)) return false;
+    const parts = path.basename(name, path.extname(name)).split(' - ');
+    return parts.some((_, i) => {
+      const rest = parts.slice(i).join(' - ');
+      return normName(rest) === want || normName(rest.replace(/^\d{1,3}(-\d{1,3})?[\s._-]+/, '')) === want;
+    });
+  });
+  const best = matches.find(isLossless) || matches[0];
+  return best ? path.join(dir, best) : null;
+}
+
+async function refreshPlaylistsFor(trackId) {
+  for (const pl of db.getPlaylists()) {
+    if (pl.trackIds.includes(trackId)) await regenerateM3UPlaylist(pl);
+  }
+}
+
 // Find all audio files recursively
 async function findAudioFiles(dir) {
   let results = [];
@@ -276,7 +311,7 @@ async function findAudioFiles(dir) {
         results = results.concat(await findAudioFiles(res));
       } else {
         const ext = path.extname(file.name).toLowerCase();
-        if (['.mp3', '.m4a', '.flac', '.wav', '.ogg'].includes(ext)) {
+        if (AUDIO_EXTS.includes(ext)) {
           results.push(res);
         }
       }
@@ -458,12 +493,7 @@ async function pollActiveDownloads(settings) {
         
         console.log(`[Worker] Successfully imported: ${destFile}`);
         
-        const playlists = db.getPlaylists();
-        for (const pl of playlists) {
-          if (pl.trackIds.includes(track.id)) {
-            await regenerateM3UPlaylist(pl);
-          }
-        }
+        await refreshPlaylistsFor(track.id);
         
         if (seeding) {
           console.log(`[Worker] Leaving torrent ${track.torrentHash} seeding.`);
@@ -488,7 +518,7 @@ function removedFromQueue(track) {
 
 // deemix: queue the exact Deezer track. A failure marks the track deemixTried
 // so this and later cycles fall through to the torrent/YouTube paths.
-async function startDeemix(track, settings, format) {
+async function startDeemix(track, settings, format, replaces = null) {
   if (!isDeezerId(track.id)) throw new Error('not a Deezer track');
   const bitrate = deemix.deemixBitrate(format);
   let uuid = await deemix.addTrack(settings, track.id, bitrate);
@@ -505,6 +535,7 @@ async function startDeemix(track, settings, format) {
     status: 'snatched',
     error: null,
     deemixUuid: uuid,
+    replaces,
     snatchedAt: new Date().toISOString()
   });
 }
@@ -569,13 +600,19 @@ async function pollDeemix(settings) {
         filePath: destFile,
         format: ext.slice(1),
         bitrate: ext === '.flac' ? 'lossless' : '320k',
+        replaces: null,
         error: null
       });
       await deemix.removeItem(settings, track.deemixUuid).catch(() => {});
       console.log(`[Worker] Imported from deemix: ${destFile}`);
-      for (const pl of db.getPlaylists()) {
-        if (pl.trackIds.includes(track.id)) await regenerateM3UPlaylist(pl);
+      // An upgrade: the lossy file it replaces goes only now the new one is in place.
+      if (track.replaces && track.replaces !== destFile) {
+        await fs.unlink(track.replaces).then(
+          () => console.log(`[Worker] Upgraded, removed ${track.replaces}`),
+          err => console.warn(`[Worker] Couldn't remove replaced file ${track.replaces}: ${err.message}`)
+        );
       }
+      await refreshPlaylistsFor(track.id);
     } catch (err) {
       await deemixFailed(track, settings, err.message);
     }
@@ -655,12 +692,7 @@ async function downloadDirectFromYouTube(track, settings, format, quality) {
 
     console.log(`[Worker] Success! Track imported: ${destFile}`);
 
-    const playlists = db.getPlaylists();
-    for (const pl of playlists) {
-      if (pl.trackIds.includes(track.id)) {
-        await regenerateM3UPlaylist(pl);
-      }
-    }
+    await refreshPlaylistsFor(track.id);
   } catch (err) {
     console.error(`[Worker] YouTube direct download failed for track ${track.title}:`, err);
     await db.updateTrack(track.id, {
@@ -703,14 +735,35 @@ export async function processQueue() {
         const quality = rule ? rule.quality : (settings.audioQuality || '320k');
         const method = settings.downloadMethod || 'direct';
 
-        if (settings.deemixUrl && !track.deemixTried && isDeezerId(track.id)) {
+        // Already in the library: keep it, unless FLAC is wanted, the file is
+        // lossy and deemix can fetch the FLAC (deemix is the only source that
+        // reliably gives FLAC). A failed upgrade keeps the existing file.
+        const existing = await findInLibrary(track, settings);
+        const upgrade = existing && format === 'flac' && !isLossless(existing);
+
+        if (settings.deemixUrl && !track.deemixTried && isDeezerId(track.id) && (!existing || upgrade)) {
           try {
-            await startDeemix(track, settings, format);
+            if (upgrade) console.log(`[Worker] Upgrading ${existing} to FLAC via deemix.`);
+            await startDeemix(track, settings, format, existing);
             continue;
           } catch (err) {
             console.warn(`[Worker] deemix couldn't take "${track.title}": ${err.message}. Falling back.`);
             await db.updateTrack(track.id, { deemixTried: true, error: `deemix: ${err.message}` });
           }
+        }
+
+        if (existing) {
+          console.log(`[Worker] Already in the library: ${existing}`);
+          await db.updateTrack(track.id, {
+            status: 'imported',
+            source: 'library',
+            filePath: existing,
+            format: path.extname(existing).slice(1).toLowerCase(),
+            replaces: null,
+            error: null
+          });
+          await refreshPlaylistsFor(track.id);
+          continue;
         }
         
         if (method === 'torrent' && settings.prowlarrUrl) {

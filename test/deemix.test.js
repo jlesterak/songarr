@@ -197,3 +197,52 @@ test('MusicBrainz fallback: original offered with an mb: id, deemix never called
   assert.ok(!fake.queue['track_mb:orig-1_9']);
   assert.equal(db.getTrack('mb:orig-1').deemixTried ?? false, false);
 });
+
+function putInLibrary(artist, album, name) {
+  const dir = path.join(db.getSettings().libraryPath, artist, album);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), 'old');
+  return path.join(dir, name);
+}
+
+test('a track already in the library is kept, not downloaded again', async () => {
+  const { findInLibrary } = worker;
+  const settings = db.getSettings();
+  const track = { title: 'Time (You and I)', artists: ['Khruangbin'], album: 'Mordechai', releaseDate: '2020-06-26' };
+  const flac = putInLibrary('Khruangbin', 'Mordechai (2020)', 'Khruangbin - Mordechai - 03 - Time (You and I).flac');
+  putInLibrary('Khruangbin', 'Mordechai (2020)', '03 - Time (You and I).mp3');
+  putInLibrary('Khruangbin', 'Mordechai (2020)', '04 - Another Time.mp3');
+  assert.equal(await findInLibrary(track, settings), flac, 'lossless preferred');
+  assert.equal(await findInLibrary({ ...track, title: 'Time' }, settings), null, '"Another Time" is not "Time"');
+  assert.ok(await findInLibrary({ ...track, title: 'Another Time' }, settings));
+
+  const queued = Object.keys(fake.queue).length + fake.removed.length;
+  await db.addTrack({ id: '5550001', ...track, duration: 300 });
+  const t = await runUntilSettled('5550001');
+  assert.equal(t.status, 'imported');
+  assert.equal(t.source, 'library');
+  assert.equal(t.filePath, flac);
+  assert.equal(Object.keys(fake.queue).length + fake.removed.length, queued, 'deemix not called');
+});
+
+test('a lossy library file is upgraded to FLAC through deemix, and the old file removed', async () => {
+  const mp3 = putInLibrary('Air', 'Moon Safari (1998)', 'Sexy Boy.mp3');
+  await db.addTrack({ id: '5550002', title: 'Sexy Boy', artists: ['Air'], album: 'Moon Safari', releaseDate: '1998-01-16', trackNumber: 2, duration: 298 });
+  const t = await runUntilSettled('5550002');
+  assert.equal(t.source, 'deemix');
+  assert.equal(t.filePath, path.join(path.dirname(mp3), '02 - Sexy Boy.flac'));
+  assert.ok(fs.existsSync(t.filePath));
+  assert.ok(!fs.existsSync(mp3), 'replaced MP3 removed');
+  assert.equal(t.replaces, null);
+});
+
+test('a failed FLAC upgrade keeps the lossy file', async () => {
+  fake.failIds.add('5550003');
+  const mp3 = putInLibrary('Moby', 'Play (1999)', '01 - Honey.mp3');
+  await db.addTrack({ id: '5550003', title: 'Honey', artists: ['Moby'], album: 'Play', releaseDate: '1999-05-17', duration: 191 });
+  const t = await runUntilSettled('5550003');
+  assert.equal(t.status, 'imported');
+  assert.equal(t.source, 'library');
+  assert.equal(t.filePath, mp3);
+  assert.ok(fs.existsSync(mp3));
+});
