@@ -12,6 +12,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- Version shown in the sidebar footer (2026-10-12): Vite stamps `package.json`'s version in at build time (`__APP_VERSION__`), no API.
 - v0.2.5 (2026-10-12): deemix queue polled once per pass. Jake approved the GitHub push and release.
 - deemix poll fetched the whole queue once per waiting track (2026-10-12, icebox: 960 tracks x 800 KB / 0.74 s = ~12 min and ~770 MB per poll pass, nonstop). Now one fetch per pass. deemix itself was doing ~1 track/min; check the rate after deploy to see whether the polling was the cause. Account has FLAC; all deemix imports so far are FLAC.
 - v0.2.4 deployed on icebox 2026-10-12; all 21 linked playlists re-synced: unmatched 87 -> 74 (Women of Bluegrass 15 -> 7). Remaining ones are mostly tracks Deezer doesn't carry; use Find on the playlist page.

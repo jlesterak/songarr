@@ -589,6 +589,9 @@ export default function App() {
               {stats.snatched > 0 || stats.downloading > 0 ? 'Processing Queue' : 'System Idle'}
             </span>
           </div>
+          <div className="app-version" style={{fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.5rem'}}>
+            v{__APP_VERSION__}
+          </div>
         </div>
       </aside>
 
