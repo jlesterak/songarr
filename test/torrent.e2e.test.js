@@ -133,7 +133,7 @@ test('a stalled torrent is dropped for the next candidate; after the attempt lim
 });
 
 test('client unreachable while polling: the track stays active and resumes', async () => {
-  await grab({ id: 'un1', artist: 'Air', title: 'La Femme d Argent', client: 'qbittorrent', settings: { seedAfterImport: false } });
+  await grab({ id: 'un1', artist: 'Air', title: 'Playground Love', client: 'qbittorrent', settings: { seedAfterImport: false } });
   await db.updateTrack('un1', { status: 'snatched' });
   await db.updateSettings({ torrentClientUrl: 'http://127.0.0.1:1' });
   await worker.processQueue();
@@ -250,4 +250,33 @@ test('SABnzbd jobs never count as seeding', async () => {
   const t = await grab({ id: 'seed6', artist: 'Zero 7', title: 'Destiny', client: 'sabnzbd' });
   assert.equal(t.status, 'imported', t.error);
   assert.equal(t.seeding, false);
+});
+
+function putInLibrary(artist, title) {
+  const dir = path.join(db.getSettings().libraryPath, artist, 'Test Album');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${title}.mp3`), 'old');
+  return path.join(dir, `${title}.mp3`);
+}
+
+test('a library MP3 is upgraded from a FLAC torrent; the MP3 goes once the FLAC is in', async () => {
+  const mp3 = putInLibrary('Ulrich Schnauss', 'On My Own');
+  const t = await grab({ id: 'up1', artist: 'Ulrich Schnauss', title: 'On My Own', client: 'qbittorrent', settings: { audioFormat: 'flac' } });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.source, 'torrent');
+  assert.equal(path.extname(t.filePath), '.flac');
+  assert.ok(fs.existsSync(t.filePath));
+  assert.ok(!fs.existsSync(mp3), 'replaced MP3 removed');
+});
+
+test('a torrent named FLAC that holds an MP3 is dropped and the library MP3 kept', async () => {
+  const mp3 = putInLibrary('Nobody Real', 'Fake Flac');
+  const t = await grab({ id: 'up2', artist: 'Nobody Real', title: 'Fake Flac', client: 'qbittorrent', settings: { audioFormat: 'flac' } });
+  assert.equal(t.status, 'imported', t.error);
+  assert.equal(t.source, 'library');
+  assert.equal(t.filePath, mp3);
+  assert.ok(fs.existsSync(mp3));
+  assert.equal(fs.readdirSync(path.dirname(mp3)).length, 1, 'nothing imported beside it');
+  const res = await fetch(`${base}/qbittorrent/api/v2/torrents/info`);
+  assert.ok(!(await res.json()).some(x => /fake flac/i.test(x.name)), 'fake FLAC torrent removed from client');
 });

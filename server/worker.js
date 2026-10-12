@@ -294,6 +294,33 @@ export async function findInLibrary(track, settings) {
   return best ? path.join(dir, best) : null;
 }
 
+// Torrent names that claim lossless; only these are worth an upgrade.
+const claimsLossless = title => /\b(flac|lossless|alac|wav|(16|24)[ -]?bit)\b/i.test(title);
+
+// Mark a wanted track as the file the library already has.
+async function keepLibraryFile(track, file, extra = {}) {
+  console.log(`[Worker] Keeping library file for "${track.title}": ${file}`);
+  await db.updateTrack(track.id, {
+    status: 'imported',
+    source: 'library',
+    filePath: file,
+    format: path.extname(file).slice(1).toLowerCase(),
+    replaces: null,
+    error: null,
+    ...extra
+  });
+  await refreshPlaylistsFor(track.id);
+}
+
+// An upgrade landed: the file it replaces goes only now the new one is in place.
+async function removeReplaced(track, destFile) {
+  if (!track.replaces || track.replaces === destFile) return;
+  await fs.unlink(track.replaces).then(
+    () => console.log(`[Worker] Upgraded, removed ${track.replaces}`),
+    err => console.warn(`[Worker] Couldn't remove replaced file ${track.replaces}: ${err.message}`)
+  );
+}
+
 async function refreshPlaylistsFor(trackId) {
   for (const pl of db.getPlaylists()) {
     if (pl.trackIds.includes(trackId)) await regenerateM3UPlaylist(pl);
@@ -460,6 +487,12 @@ async function pollActiveDownloads(settings) {
         // Keep the file's real container: a FLAC renamed to .mp3 plays badly
         // and then gets an ID3 header written into it.
         const ext = path.extname(bestFile).toLowerCase();
+        if (track.replaces && !isLossless(bestFile)) {
+          console.warn(`[Worker] "${track.torrentName}" claimed FLAC but holds ${ext}; not an upgrade.`);
+          await client.removeTorrent(track.torrentHash, true);
+          await keepLibraryFile(track, track.replaces, { torrentHash: null });
+          continue;
+        }
         const destFile = path.join(targetAlbumDir, `${trackNum} - ${sanitizeFilename(track.title)}${ext}`);
         await fs.mkdir(targetAlbumDir, { recursive: true });
         
@@ -488,8 +521,10 @@ async function pollActiveDownloads(settings) {
           bitrate: quality,
           format: ext.slice(1),
           seeding,
+          replaces: null,
           error: tagged ? null : 'Tagging failed, but audio downloaded'
         });
+        await removeReplaced(track, destFile);
         
         console.log(`[Worker] Successfully imported: ${destFile}`);
         
@@ -504,6 +539,10 @@ async function pollActiveDownloads(settings) {
       }
     } catch (err) {
       console.error(`[Worker] Failed to process active torrent download for "${track.title}":`, err.message);
+      if (track.replaces) {
+        await keepLibraryFile(track, track.replaces, { error: `Upgrade failed: ${err.message}` });
+        continue;
+      }
       await db.updateTrack(track.id, { status: 'failed', error: err.message || 'Torrent processing error' });
     }
   }
@@ -605,13 +644,7 @@ async function pollDeemix(settings) {
       });
       await deemix.removeItem(settings, track.deemixUuid).catch(() => {});
       console.log(`[Worker] Imported from deemix: ${destFile}`);
-      // An upgrade: the lossy file it replaces goes only now the new one is in place.
-      if (track.replaces && track.replaces !== destFile) {
-        await fs.unlink(track.replaces).then(
-          () => console.log(`[Worker] Upgraded, removed ${track.replaces}`),
-          err => console.warn(`[Worker] Couldn't remove replaced file ${track.replaces}: ${err.message}`)
-        );
-      }
+      await removeReplaced(track, destFile);
       await refreshPlaylistsFor(track.id);
     } catch (err) {
       await deemixFailed(track, settings, err.message);
@@ -735,11 +768,13 @@ export async function processQueue() {
         const quality = rule ? rule.quality : (settings.audioQuality || '320k');
         const method = settings.downloadMethod || 'direct';
 
-        // Already in the library: keep it, unless FLAC is wanted, the file is
-        // lossy and deemix can fetch the FLAC (deemix is the only source that
-        // reliably gives FLAC). A failed upgrade keeps the existing file.
+        // Already in the library: keep it, unless FLAC is wanted and the file
+        // is lossy. Then deemix, else a torrent that claims FLAC, may replace
+        // it; YouTube never does (it only gives MP3). A failed upgrade keeps
+        // the existing file.
         const existing = await findInLibrary(track, settings);
         const upgrade = existing && format === 'flac' && !isLossless(existing);
+        const torrentMode = method === 'torrent' && settings.prowlarrUrl;
 
         if (settings.deemixUrl && !track.deemixTried && isDeezerId(track.id) && (!existing || upgrade)) {
           try {
@@ -752,21 +787,12 @@ export async function processQueue() {
           }
         }
 
-        if (existing) {
-          console.log(`[Worker] Already in the library: ${existing}`);
-          await db.updateTrack(track.id, {
-            status: 'imported',
-            source: 'library',
-            filePath: existing,
-            format: path.extname(existing).slice(1).toLowerCase(),
-            replaces: null,
-            error: null
-          });
-          await refreshPlaylistsFor(track.id);
+        if (existing && !(upgrade && torrentMode)) {
+          await keepLibraryFile(track, existing);
           continue;
         }
-        
-        if (method === 'torrent' && settings.prowlarrUrl) {
+
+        if (torrentMode) {
           try {
             await db.updateTrack(track.id, {
               status: 'snatched',
@@ -782,11 +808,13 @@ export async function processQueue() {
               throw new Error(`${tried.length} torrents stalled`);
             }
             const candidates = (await utils.searchIndexer(query, settings))
-              .filter(c => !tried.includes(c.title));
+              .filter(c => !tried.includes(c.title))
+              .filter(c => !existing || claimsLossless(c.title));
             
             if (candidates.length === 0) {
-              throw new Error(tried.length ? 'No untried torrent candidates left' : 'No torrent candidates found');
+              throw new Error(existing ? 'No FLAC torrent to upgrade from' : tried.length ? 'No untried torrent candidates left' : 'No torrent candidates found');
             }
+            if (existing) console.log(`[Worker] Upgrading ${existing} to FLAC via torrent.`);
             
             const scored = candidates.map(c => ({
               candidate: c,
@@ -821,12 +849,17 @@ export async function processQueue() {
             await db.updateTrack(track.id, {
               torrentHash: hash,
               torrentName: best.candidate.title,
+              replaces: existing,
               snatchedAt: new Date().toISOString(),
               lastProgress: 0,
               lastProgressAt: null
             });
           } catch (err) {
             console.error(`[Worker] Failed to snatch torrent for ${track.title}:`, err.message);
+            if (existing) {
+              await keepLibraryFile(track, existing);
+              continue;
+            }
             console.log(`[Worker] Falling back to YouTube direct download for "${track.title}"...`);
             await downloadDirectFromYouTube(track, settings, format, quality);
           }

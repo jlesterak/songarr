@@ -116,9 +116,11 @@ function releases(req, query) {
     { title: `${cleanQuery} [MP3 320kbps] dead-a`, link: link('mp3', true), size: 10000000, seeders: 900, peers: 1 },
     { title: `${cleanQuery} [MP3 320kbps] dead-b`, link: link('mp3', true), size: 10000000, seeders: 800, peers: 1 }
   ] : [];
+  // "Fake Flac" queries get a release named FLAC that holds MP3s.
+  const flac = /fake flac/i.test(cleanQuery) ? 'mp3' : 'flac';
   return [
     ...deadOnes,
-    { title: `${cleanQuery} [FLAC] [Lossless]`, link: link('flac'), size: 35000000, seeders: 42, peers: 5 },
+    { title: `${cleanQuery} [FLAC] [Lossless]`, link: link(flac), size: 35000000, seeders: 42, peers: 5 },
     { title: `${cleanQuery} [MP3 320kbps]`, link: link('mp3'), size: 10000000, seeders: 15, peers: 1 }
   ];
 }
