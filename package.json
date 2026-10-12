@@ -1,6 +1,6 @@
 {
   "name": "songarr",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Track-first music request and automation platform",
   "type": "module",
   "main": "server/index.js",
