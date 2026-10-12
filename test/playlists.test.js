@@ -87,3 +87,49 @@ test('duplicate playlist names get a unique name, and so a unique M3U', async ()
   const dir = path.join(process.env.SONGARR_MUSIC_DIR, 'Playlists');
   assert.ok(fs.existsSync(path.join(dir, 'Road Trip.m3u')) && fs.existsSync(path.join(dir, 'road trip (2).m3u')));
 });
+
+test('add-only keeps tracks the source drops, until switched off', async () => {
+  spotifyTracks = [['Artist', 'Song', 200], ['Artist', 'Other', 180]];
+  const { playlist: pl } = await sync.linkPlaylist('https://open.spotify.com/playlist/AddOnly0001');
+  await db.updatePlaylist(pl.id, { addOnly: true });
+  await sync.syncPlaylist(pl.id);
+  const get = () => db.getPlaylists().find(p => p.id === pl.id);
+  assert.deepEqual(get().trackIds, ['2', '3']);
+
+  spotifyTracks = [['Artist', 'Other', 180]];
+  await sync.syncPlaylist(pl.id);
+  assert.deepEqual(get().trackIds, ['3', '2'], 'dropped track kept, after the current ones');
+  await sync.syncPlaylist(pl.id);
+  assert.deepEqual(get().trackIds, ['3', '2'], 'still kept on the next sync');
+
+  spotifyTracks = [['Artist', 'Song', 200], ['Artist', 'Other', 180]];
+  await sync.syncPlaylist(pl.id);
+  assert.deepEqual(get().trackIds, ['2', '3'], 'back in source order when re-added');
+  assert.ok(!get().sourceTracks.some(s => s.gone));
+
+  spotifyTracks = [['Artist', 'Other', 180]];
+  await sync.syncPlaylist(pl.id);
+  await db.updatePlaylist(pl.id, { addOnly: false });
+  await sync.syncPlaylist(pl.id);
+  assert.deepEqual(get().trackIds, ['3'], 'switching add-only off drops it');
+});
+
+test('a playlist\'s own syncHours overrides the global setting', async () => {
+  const pls = db.getPlaylists().filter(p => p.sourceId);
+  const [a, b] = pls;
+  const hourAgo = new Date(Date.now() - 3600e3).toISOString();
+  for (const p of pls) await db.updatePlaylist(p.id, { lastSyncAttemptAt: hourAgo, syncHours: 0 });
+  await db.updateSettings({ playlistSyncHours: 0 });
+  await db.updatePlaylist(a.id, { syncHours: 1 }); // due, though the global setting is off
+  await db.updatePlaylist(b.id, { syncHours: null }); // follows the global setting: off
+  await sync.syncDue();
+  const get = id => db.getPlaylists().find(p => p.id === id);
+  assert.notEqual(get(a.id).lastSyncAttemptAt, hourAgo);
+  assert.equal(get(b.id).lastSyncAttemptAt, hourAgo);
+
+  await db.updateSettings({ playlistSyncHours: 1 });
+  await db.updatePlaylist(a.id, { syncHours: 0, lastSyncAttemptAt: hourAgo }); // off beats the global setting
+  await sync.syncDue();
+  assert.equal(get(a.id).lastSyncAttemptAt, hourAgo);
+  assert.notEqual(get(b.id).lastSyncAttemptAt, hourAgo);
+});

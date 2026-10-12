@@ -431,6 +431,19 @@ export default function App() {
     }
   };
 
+  const handlePlaylistOptions = async (pl, patch) => {
+    try {
+      const res = await fetch(`/api/v1/playlists/${pl.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      if (res.ok) fetchPlaylists();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Batch import handlers
   const handleTextImport = async () => {
     if (!textImport.trim()) return;
@@ -952,6 +965,37 @@ export default function App() {
                         {selectedPlaylist.lastSyncError && <span style={{color: 'var(--color-danger, #e55)'}}> · last sync failed: {selectedPlaylist.lastSyncError}</span>}
                       </p>
                     )}
+                    {selectedPlaylist.sourceUrl && (
+                      <div style={{display: 'flex', gap: '1.5rem', alignItems: 'center', flexWrap: 'wrap', fontSize: '0.85rem', marginTop: '0.75rem'}}>
+                        <label>
+                          Auto-sync{' '}
+                          <select
+                            className="input-text"
+                            style={{width: 'auto', display: 'inline-block', padding: '0.25rem 0.5rem'}}
+                            value={selectedPlaylist.syncHours ?? ''}
+                            onChange={e => handlePlaylistOptions(selectedPlaylist, { syncHours: e.target.value === '' ? null : Number(e.target.value) })}
+                          >
+                            <option value="">Default ({settings.playlistSyncHours ? `every ${settings.playlistSyncHours} h` : 'off'})</option>
+                            <option value="0">Off</option>
+                            <option value="6">Every 6 hours</option>
+                            <option value="12">Every 12 hours</option>
+                            <option value="24">Daily</option>
+                            <option value="168">Weekly</option>
+                            {![null, undefined, 0, 6, 12, 24, 168].includes(selectedPlaylist.syncHours) && (
+                              <option value={selectedPlaylist.syncHours}>Every {selectedPlaylist.syncHours} h</option>
+                            )}
+                          </select>
+                        </label>
+                        <label title="Tracks removed from the Spotify playlist stay in this playlist">
+                          <input
+                            type="checkbox"
+                            checked={!!selectedPlaylist.addOnly}
+                            onChange={e => handlePlaylistOptions(selectedPlaylist, { addOnly: e.target.checked })}
+                          />{' '}
+                          Add only (keep tracks Spotify removes)
+                        </label>
+                      </div>
+                    )}
                   </div>
                   <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
                     {selectedPlaylist.sourceUrl && (
@@ -1001,6 +1045,9 @@ export default function App() {
                                   <div className="track-meta-wrapper">
                                     <span className="track-main-title">{track.title}</span>
                                     <span className="track-sub-details">{track.artists.join(', ')}</span>
+                                    {selectedPlaylist.sourceTracks?.some(st => st.gone && st.trackId === track.id) && (
+                                      <span className="track-sub-details" style={{fontStyle: 'italic'}}>no longer on Spotify (kept: add-only)</span>
+                                    )}
                                   </div>
                                 </div>
                               </td>

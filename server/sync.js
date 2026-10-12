@@ -2,7 +2,7 @@
 // the best Deezer result (MusicBrainz when Deezer only has covers/remixes),
 // and keeping the Songarr playlist (and its M3U) in step with the source.
 // Music files are never deleted: a track dropped from the source only leaves
-// the playlist.
+// the playlist, or stays in it (marked gone) when the playlist is add-only.
 
 import * as db from './db.js';
 import * as utils from './utils.js';
@@ -120,6 +120,13 @@ export async function syncPlaylist(id, prefetched = null) {
       if (!trackId) unmatched.push(`${src.artist} - ${src.title}`);
       sourceTracks.push({ key, title: src.title, artist: src.artist, durationMs: src.durationMs || 0, trackId });
     }
+    // Add-only: tracks the source dropped stay, after the current ones.
+    if (pl.addOnly) {
+      const keys = new Set(sourceTracks.map(s => s.key));
+      for (const old of pl.sourceTracks || []) {
+        if (old.trackId && !keys.has(old.key)) sourceTracks.push({ ...old, gone: true });
+      }
+    }
 
     // Source order, then anything the user added by hand.
     const oldSourceIds = new Set((pl.sourceTracks || []).map(s => s.trackId).filter(Boolean));
@@ -144,12 +151,19 @@ export async function syncPlaylist(id, prefetched = null) {
   }
 }
 
-// Syncs every linked playlist that is due (setting playlistSyncHours; 0 = off).
+// Hours between syncs: the playlist's own syncHours, else the playlistSyncHours
+// setting. 0 = off.
+export function syncHoursFor(pl) {
+  const own = pl.syncHours;
+  return Number(own ?? db.getSettings().playlistSyncHours) || 0;
+}
+
+// Syncs every linked playlist that is due.
 export async function syncDue(now = Date.now()) {
-  const hours = Number(db.getSettings().playlistSyncHours) || 0;
-  if (hours <= 0) return;
   for (const pl of db.getPlaylists()) {
     if (!pl.sourceId) continue;
+    const hours = syncHoursFor(pl);
+    if (hours <= 0) continue;
     const last = Date.parse(pl.lastSyncAttemptAt || pl.lastSyncedAt || 0) || 0;
     if (now - last >= hours * 3600e3) await syncPlaylist(pl.id).catch(err => console.error('[Sync]', err.message));
   }

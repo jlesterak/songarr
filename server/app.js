@@ -288,13 +288,21 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     }
   });
 
-  // Rename (the M3U follows) and/or edit the description.
+  // Rename (the M3U follows), edit the description, or set the sync options:
+  // syncHours (null = the global setting, 0 = off) and addOnly.
   app.patch('/api/v1/playlists/:id', async (req, res) => {
     try {
-      const { name, description } = req.body;
+      const { name, description, syncHours, addOnly } = req.body;
       const patch = {};
       if (typeof name === 'string' && name.trim()) patch.name = name;
       if (typeof description === 'string') patch.description = description;
+      if (syncHours === null || syncHours === '') patch.syncHours = null;
+      else if (syncHours !== undefined) {
+        const h = Number(syncHours);
+        if (!Number.isFinite(h) || h < 0) return res.status(400).json({ error: 'syncHours must be a number >= 0, or null' });
+        patch.syncHours = h;
+      }
+      if (typeof addOnly === 'boolean') patch.addOnly = addOnly;
       const done = await db.updatePlaylist(req.params.id, patch);
       if (!done) return res.status(404).json({ error: 'Playlist not found' });
       if (done.playlist.name !== done.oldName) await worker.removeM3U(done.oldName);

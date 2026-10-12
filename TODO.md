@@ -3,6 +3,8 @@
 ## [IN PROGRESS]
 
 ## [PENDING]
+- Spotify playlists cap at 100 tracks: the embed page only lists the first 100 (seen 2026-10-12, every big import stopped at exactly 100). Getting past it needs the Spotify Web API, which no longer serves Spotify's own (37i9dQZF…) playlists to client-credentials apps. Leave as a known limit unless a simple route turns up.
+- Deploy per-playlist auto-sync / add-only to icebox (needs a release to GHCR, or a local build on icebox).
 - Navidrome: scan confirmed working on icebox (2026-10-06); still to confirm M3U sync.
 - Confirm live on icebox: re-request Khruangbin "Time (You and I)" is marked imported from the library, and an MP3 in the library upgrades to FLAC via deemix (and via torrent with deemix unset).
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
@@ -10,6 +12,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- Per-playlist sync options (2026-10-12): `syncHours` (empty = the global `playlistSyncHours`, 0 = off, N hours) and `addOnly` (tracks Spotify drops stay, marked "no longer on Spotify"; they rejoin source order if re-added; switching it off drops them at the next sync). Set from the playlist page; PATCH /api/v1/playlists/:id. 65 tests.
 - Torrent FLAC upgrade (2026-10-11): when deemix can't upgrade a lossy library file (unset, tried, or not a Deezer id) and torrent mode is on, only releases whose name claims lossless (flac/lossless/alac/wav/16-24 bit) are searched. A real FLAC is imported and the old file removed; a "FLAC" release holding MP3s is removed from the client and the old file kept; no FLAC release, all stalled, or an import error also keeps it. Never falls back to YouTube for an upgrade. Mock indexer: "Fake Flac" queries get a FLAC-named release of MP3s. The "client unreachable" test now uses its own track (it had become a library hit). 61 tests.
 - v0.2.2 (2026-10-11): library check + FLAC upgrade (deemix, then torrents that claim FLAC), `npm audit fix` (production deps clean), README layout line corrected. Pushed to GitHub, tests + publish green; icebox repo push pending (host unreachable).
 - Library check (2026-10-11): before grabbing a wanted track, `findInLibrary` looks in `<Artist>/<Album (Year)>/` for an audio file named "Title", "NN - Title", "1-04 Title" or "Artist - Album - NN - Title" (punctuation/case-insensitive, lossless preferred). Found -> imported with source `library`. If the target is FLAC, the file is lossy and deemix can take the Deezer id, deemix fetches the FLAC and the old file is removed once the new one is in place (`replaces`); a failed upgrade keeps the old file. Misses other folder layouts (accepted). Found on icebox: Khruangbin "Time (You and I)" was already in the library. 59 tests.
