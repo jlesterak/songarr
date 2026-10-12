@@ -12,6 +12,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- deemix idle after a restart (2026-10-12, seen after the nicebox RAM swap): deemix restores its queue but only starts it when something is added, and Songarr had nothing new to add, so 1,136 items sat idle (0 imports in 10 min). Songarr now re-adds one of its items when deemix has been idle for two polls in a row with our items queued. Kicked by hand on icebox the same day. 68 tests.
 - Version shown in the sidebar footer (2026-10-12): Vite stamps `package.json`'s version in at build time (`__APP_VERSION__`), no API.
 - v0.2.5 (2026-10-12): deemix queue polled once per pass. Jake approved the GitHub push and release.
 - deemix poll fetched the whole queue once per waiting track (2026-10-12, icebox: 960 tracks x 800 KB / 0.74 s = ~12 min and ~770 MB per poll pass, nonstop). Now one fetch per pass. deemix itself was doing ~1 track/min; check the rate after deploy to see whether the polling was the cause. Account has FLAC; all deemix imports so far are FLAC.

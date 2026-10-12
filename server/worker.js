@@ -597,6 +597,29 @@ async function deemixFailed(track, settings, reason) {
 // the download copy afterwards.
 const moveFile = deemix.copyOrMove;
 
+// deemix restores its queue after a restart but only starts it when something
+// is added, so our items can sit in it forever. If nothing has been downloading
+// for two polls in a row, re-add one of ours, which starts the queue.
+let deemixIdlePolls = 0;
+async function nudgeIdleDeemix(settings, queue, tracks) {
+  const items = Object.values(queue);
+  const waiting = tracks.map(t => queue[t.deemixUuid]).find(i => i?.status === 'inQueue');
+  if (!waiting || items.some(i => i.status === 'downloading')) {
+    deemixIdlePolls = 0;
+    return;
+  }
+  if (++deemixIdlePolls < 2) return;
+  deemixIdlePolls = 0;
+  const bitrate = Number(String(waiting.uuid).split('_').pop());
+  console.log(`[Worker] deemix has queued items but is idle; re-adding ${waiting.uuid} to start it.`);
+  try {
+    await deemix.removeItem(settings, waiting.uuid);
+    await deemix.addTrack(settings, waiting.id, bitrate);
+  } catch (err) {
+    console.warn(`[Worker] Couldn't restart the deemix queue: ${err.message}`);
+  }
+}
+
 async function pollDeemix(settings) {
   const tracks = db.getTracks().filter(t => ['snatched', 'downloading'].includes(t.status) && t.deemixUuid);
   if (!tracks.length) return;
@@ -607,6 +630,7 @@ async function pollDeemix(settings) {
     console.warn(`[Worker] Couldn't reach deemix (${err.message}); will retry.`);
     return;
   }
+  await nudgeIdleDeemix(settings, queue, tracks);
   for (const track of tracks) {
     const item = queue[track.deemixUuid] || null;
     try {

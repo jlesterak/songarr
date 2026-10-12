@@ -19,7 +19,7 @@ fs.mkdirSync(dlDir);
 
 // Fake deemix: one session cookie, saved ARL "abc123", items finish on the
 // second getQueue. failIds end with no file, like a track Deezer won't serve.
-const fake = { loggedIn: false, queue: {}, polls: {}, removed: [], failIds: new Set(), queueFetches: 0 };
+const fake = { loggedIn: false, queue: {}, polls: {}, removed: [], failIds: new Set(), queueFetches: 0, stalled: false };
 const server = http.createServer(async (req, res) => {
   let body = '';
   for await (const chunk of req) body += chunk;
@@ -39,10 +39,12 @@ const server = http.createServer(async (req, res) => {
       const uuid = `track_${id}_${json.bitrate}`;
       if (fake.queue[uuid]) return send({ result: true }); // real deemix keeps the old item
       fake.queue[uuid] = { uuid, status: 'inQueue', id, ext: json.bitrate === 9 ? 'flac' : 'mp3' };
+      fake.stalled = false; // like deemix: adding starts the queue
       return send({ result: true });
     }
     case '/api/getQueue': {
       fake.queueFetches++;
+      if (fake.stalled) return send({ queue: fake.queue, queueOrder: [] });
       for (const item of Object.values(fake.queue)) {
         fake.polls[item.uuid] = (fake.polls[item.uuid] || 0) + 1;
         if (fake.polls[item.uuid] === 1) item.status = 'downloading';
@@ -258,4 +260,20 @@ test('one poll fetches the deemix queue once, however many tracks wait on it', a
   assert.ok(fake.queueFetches <= 1, `getQueue fetched ${fake.queueFetches} times in one poll`);
   for (let i = 0; i < 3; i++) await worker.processQueue();
   for (const id of ['501', '502', '503', '504']) assert.equal(db.getTrack(id).status, 'imported');
+});
+
+test('an idle deemix queue (as after a deemix restart) is restarted by re-adding one item', async () => {
+  await db.addTrack({ id: '601', title: 'Stuck', artists: ['Restart'], album: 'R', duration: 100 });
+  await worker.processQueue(); // queued in deemix
+  // deemix restarted: queue restored with everything back to inQueue, nothing running
+  fake.stalled = true;
+  for (const item of Object.values(fake.queue)) { item.status = 'inQueue'; delete fake.polls[item.uuid]; }
+  fake.removed = [];
+  await worker.processQueue();
+  assert.equal(fake.stalled, true, 'one idle poll is not enough');
+  await worker.processQueue();
+  assert.equal(fake.stalled, false, 'second idle poll re-adds an item');
+  assert.deepEqual(fake.removed, ['track_601_9']);
+  for (let i = 0; i < 3; i++) await worker.processQueue();
+  assert.equal(db.getTrack('601').status, 'imported');
 });
