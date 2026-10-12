@@ -11,6 +11,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- v0.2.4 deployed on icebox 2026-10-12; all 21 linked playlists re-synced: unmatched 87 -> 74 (Women of Bluegrass 15 -> 7). Remaining ones are mostly tracks Deezer doesn't carry; use Find on the playlist page.
 - v0.2.4 (2026-10-12): manual match + plain-then-dashed Deezer query. Jake approved the GitHub push and release.
 - Manual match (2026-10-12): each "Couldn't match" track on a linked playlist has a Find button (search prefilled with artist + title, results show Deezer vs Spotify length); "Use this" links the pick to that source track, in source order, and later syncs keep it. POST /api/v1/playlists/:id/match `{ key, track }`; 409 while that playlist is syncing. Checked in headless Chrome against a throwaway server (15 -> 14 unmatched, no page errors).
 - Matching: Deezer returns nothing for some `Artist - Title` queries that `Artist Title` finds (and the other way round), so matching tries plain first, then dashed. Women of Bluegrass 85 -> 93 of 100, Alternative 90s unchanged at 73 of 80, no wrong-artist matches.
