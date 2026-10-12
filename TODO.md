@@ -12,6 +12,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- "Back to Playlists" fixed (2026-10-12, Jake): the polling effect depended on `selectedPlaylist`, and each playlist fetch replaced it with a new object, so an open playlist re-fetched `/api/v1/playlists` (1.1 MB on icebox) back to back (810 requests in 10 s locally), and a reply landing after Back reopened the playlist. Now one mount effect, a functional update that can't reopen, and a 15 s refresh only while a playlist is open. Checked in headless Chrome, old build vs new.
 - v0.2.6 (2026-10-12): version in the sidebar, idle deemix queue restarted automatically. Jake approved the GitHub push and release.
 - deemix idle after a restart (2026-10-12, seen after the nicebox RAM swap): deemix restores its queue but only starts it when something is added, and Songarr had nothing new to add, so 1,136 items sat idle (0 imports in 10 min). Songarr now re-adds one of its items when deemix has been idle for two polls in a row with our items queued. Kicked by hand on icebox the same day. 68 tests.
 - Version shown in the sidebar footer (2026-10-12): Vite stamps `package.json`'s version in at build time (`__APP_VERSION__`), no API.

@@ -119,11 +119,9 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setPlaylists(data);
-        // Refresh active playlist details if one is selected
-        if (selectedPlaylist) {
-          const updated = data.find(p => p.id === selectedPlaylist.id);
-          if (updated) setSelectedPlaylist(updated);
-        }
+        // Refresh the open playlist, judged when the reply lands: a reply that
+        // arrives after "Back" must not reopen it.
+        setSelectedPlaylist(cur => cur ? (data.find(p => p.id === cur.id) || cur) : cur);
       }
     } catch (e) {
       console.error('Failed to fetch playlists', e);
@@ -167,7 +165,15 @@ export default function App() {
     }, 4000); // Poll status/queue every 4 seconds for immediate updates
 
     return () => clearInterval(interval);
-  }, [selectedPlaylist]);
+  }, []);
+
+  // The open playlist (sync progress, imports) refreshes every 15 s. The full
+  // playlist list is ~1 MB, so not on the 4 s cycle.
+  useEffect(() => {
+    if (!selectedPlaylist?.id) return;
+    const interval = setInterval(fetchPlaylists, 15000);
+    return () => clearInterval(interval);
+  }, [selectedPlaylist?.id]);
 
   // Handle Search submit
   const handleSearch = async (e) => {
