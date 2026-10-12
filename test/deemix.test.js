@@ -19,7 +19,7 @@ fs.mkdirSync(dlDir);
 
 // Fake deemix: one session cookie, saved ARL "abc123", items finish on the
 // second getQueue. failIds end with no file, like a track Deezer won't serve.
-const fake = { loggedIn: false, queue: {}, polls: {}, removed: [], failIds: new Set() };
+const fake = { loggedIn: false, queue: {}, polls: {}, removed: [], failIds: new Set(), queueFetches: 0 };
 const server = http.createServer(async (req, res) => {
   let body = '';
   for await (const chunk of req) body += chunk;
@@ -42,6 +42,7 @@ const server = http.createServer(async (req, res) => {
       return send({ result: true });
     }
     case '/api/getQueue': {
+      fake.queueFetches++;
       for (const item of Object.values(fake.queue)) {
         fake.polls[item.uuid] = (fake.polls[item.uuid] || 0) + 1;
         if (fake.polls[item.uuid] === 1) item.status = 'downloading';
@@ -245,4 +246,16 @@ test('a failed FLAC upgrade keeps the lossy file', async () => {
   assert.equal(t.source, 'library');
   assert.equal(t.filePath, mp3);
   assert.ok(fs.existsSync(mp3));
+});
+
+test('one poll fetches the deemix queue once, however many tracks wait on it', async () => {
+  for (const id of ['501', '502', '503', '504']) {
+    await db.addTrack({ id, title: `Song ${id}`, artists: ['Many'], album: 'Batch', duration: 100 });
+  }
+  await worker.processQueue(); // queues all four in deemix
+  fake.queueFetches = 0;
+  await worker.processQueue(); // polls them
+  assert.ok(fake.queueFetches <= 1, `getQueue fetched ${fake.queueFetches} times in one poll`);
+  for (let i = 0; i < 3; i++) await worker.processQueue();
+  for (const id of ['501', '502', '503', '504']) assert.equal(db.getTrack(id).status, 'imported');
 });

@@ -599,14 +599,16 @@ const moveFile = deemix.copyOrMove;
 
 async function pollDeemix(settings) {
   const tracks = db.getTracks().filter(t => ['snatched', 'downloading'].includes(t.status) && t.deemixUuid);
+  if (!tracks.length) return;
+  let queue;
+  try {
+    queue = await deemix.getQueue(settings);
+  } catch (err) {
+    console.warn(`[Worker] Couldn't reach deemix (${err.message}); will retry.`);
+    return;
+  }
   for (const track of tracks) {
-    let item;
-    try {
-      item = await deemix.getItem(settings, track.deemixUuid);
-    } catch (err) {
-      console.warn(`[Worker] Couldn't reach deemix for "${track.title}" (${err.message}); will retry.`);
-      continue;
-    }
+    const item = queue[track.deemixUuid] || null;
     try {
       if (!item) {
         await deemixFailed(track, settings, 'item vanished from the deemix queue');

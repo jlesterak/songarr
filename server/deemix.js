@@ -73,9 +73,15 @@ export async function addTrack(settings, trackId, bitrate) {
 }
 
 // The queue item, or null when deemix no longer has it.
-export async function getItem(settings, uuid) {
+// The whole queue as { uuid: item }. It is large (~800 KB for 1,000 items),
+// so poll it once and look items up locally.
+export async function getQueue(settings) {
   const q = await call(settings, '/getQueue');
-  return q.queue?.[uuid] || null;
+  return q.queue || {};
+}
+
+export async function getItem(settings, uuid) {
+  return (await getQueue(settings))[uuid] || null;
 }
 
 export async function removeItem(settings, uuid) {

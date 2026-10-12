@@ -3,6 +3,7 @@
 ## [IN PROGRESS]
 
 ## [PENDING]
+- YouTube 403 "unable to download video data" on yt-dlp 2026.08.19 (latest): 2 of ~1,260 tracks (both MusicBrainz matches, so no deemix). Re-requested 2026-10-12. If it keeps happening, look at yt-dlp's PO token / cookies guidance.
 - Spotify playlists cap at 100 tracks: the embed page only lists the first 100 (seen 2026-10-12, every big import stopped at exactly 100). Getting past it needs the Spotify Web API, which no longer serves Spotify's own (37i9dQZF…) playlists to client-credentials apps. Leave as a known limit unless a simple route turns up.
 - Navidrome: scan confirmed working on icebox (2026-10-06); still to confirm M3U sync.
 - Confirm live on icebox: re-request Khruangbin "Time (You and I)" is marked imported from the library, and an MP3 in the library upgrades to FLAC via deemix (and via torrent with deemix unset).
@@ -11,6 +12,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- deemix poll fetched the whole queue once per waiting track (2026-10-12, icebox: 960 tracks x 800 KB / 0.74 s = ~12 min and ~770 MB per poll pass, nonstop). Now one fetch per pass. deemix itself was doing ~1 track/min; check the rate after deploy to see whether the polling was the cause. Account has FLAC; all deemix imports so far are FLAC.
 - v0.2.4 deployed on icebox 2026-10-12; all 21 linked playlists re-synced: unmatched 87 -> 74 (Women of Bluegrass 15 -> 7). Remaining ones are mostly tracks Deezer doesn't carry; use Find on the playlist page.
 - v0.2.4 (2026-10-12): manual match + plain-then-dashed Deezer query. Jake approved the GitHub push and release.
 - Manual match (2026-10-12): each "Couldn't match" track on a linked playlist has a Find button (search prefilled with artist + title, results show Deezer vs Spotify length); "Use this" links the pick to that source track, in source order, and later syncs keep it. POST /api/v1/playlists/:id/match `{ key, track }`; 409 while that playlist is syncing. Checked in headless Chrome against a throwaway server (15 -> 14 unmatched, no page errors).
