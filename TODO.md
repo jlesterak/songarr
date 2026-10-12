@@ -4,7 +4,6 @@
 
 ## [PENDING]
 - Spotify playlists cap at 100 tracks: the embed page only lists the first 100 (seen 2026-10-12, every big import stopped at exactly 100). Getting past it needs the Spotify Web API, which no longer serves Spotify's own (37i9dQZF…) playlists to client-credentials apps. Leave as a known limit unless a simple route turns up.
-- Deploy per-playlist auto-sync / add-only to icebox (needs a release to GHCR, or a local build on icebox).
 - Navidrome: scan confirmed working on icebox (2026-10-06); still to confirm M3U sync.
 - Confirm live on icebox: re-request Khruangbin "Time (You and I)" is marked imported from the library, and an MP3 in the library upgrades to FLAC via deemix (and via torrent with deemix unset).
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
@@ -12,6 +11,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- v0.2.3 (2026-10-12): per-playlist auto-sync + add-only, Spotify matching fixes. Jake approved the GitHub push and release.
 - Spotify matching fixes (2026-10-12; All Out 2000s went 65 -> 93 of 100 matched, no false matches): the embed's multi-artist subtitle ("A,<NBSP>B") is split into artists; `$` normalises to `s` (Ke$ha); `- From "X" Soundtrack` tags are dropped before searching; karaoke "Made famous by" artists and `(Live ...)` cuts score below the cutoff; Deezer's over-quota answer (200 + error code 4, hit when many playlists import at once) is retried instead of read as "no results". Unmatched tracks are re-tried on every sync. 65 tests.
 - Per-playlist sync options (2026-10-12): `syncHours` (empty = the global `playlistSyncHours`, 0 = off, N hours) and `addOnly` (tracks Spotify drops stay, marked "no longer on Spotify"; they rejoin source order if re-added; switching it off drops them at the next sync). Set from the playlist page; PATCH /api/v1/playlists/:id. 63 tests.
 - Torrent FLAC upgrade (2026-10-11): when deemix can't upgrade a lossy library file (unset, tried, or not a Deezer id) and torrent mode is on, only releases whose name claims lossless (flac/lossless/alac/wav/16-24 bit) are searched. A real FLAC is imported and the old file removed; a "FLAC" release holding MP3s is removed from the client and the old file kept; no FLAC release, all stalled, or an import error also keeps it. Never falls back to YouTube for an upgrade. Mock indexer: "Fake Flac" queries get a FLAC-named release of MP3s. The "client unreachable" test now uses its own track (it had become a library hit). 61 tests.
