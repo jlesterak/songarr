@@ -9,17 +9,18 @@ With Songarr, you can discover a song (via Shazam, streaming, etc.), search it o
 ## Key Features
 
 - 🔍 **Track-First Search**: Search the global Deezer catalog (millions of tracks with high-res cover art) and request single tracks with one click.
-- 💿 **deemix source (optional)**: with a [deemix](https://github.com/bambanah/deemix) instance and a Deezer account, Songarr grabs the exact Deezer track first (FLAC on a paid plan, else MP3 320) and falls back to torrents/YouTube only if that fails. It reuses the login saved in deemix, so the only setting is its URL.
+- 💿 **deemix source (optional)**: with a [deemix](https://github.com/bambanah/deemix) instance and a Deezer account, Songarr grabs the exact Deezer track first (FLAC on a paid plan, else the best MP3 the account allows) and falls back to torrents/YouTube only if that fails. It reuses the login saved in deemix, so the only setting is its URL. deemix downloads one queue item at a time; if it restarts with items still queued (it doesn't resume on its own), Songarr restarts the queue.
+- 🧲 **Torrents and Usenet (optional)**: searches Prowlarr or Jackett and sends the grab to qBittorrent, Deluge, Transmission or SABnzbd. Songarr fetches the `.torrent` itself (clients behind a VPN often can't reach the indexer). A torrent with no progress for `stallTimeoutMinutes` (default 30) is dropped and the next candidate tried; after `maxTorrentAttempts` (default 3) the track goes to YouTube. Torrents keep seeding after import until an optional ratio/time limit, and the library copy is a hardlink, so seeding costs no extra space. Remote path mapping as in the *arrs.
 - ♻️ **Skips what you already have**: a request whose file is already in its `Artist/Album (Year)/` folder is marked imported instead of downloaded again. With FLAC as the target, a lossy copy is upgraded through deemix, or else a torrent that claims FLAC (checked on arrival; a fake is dropped). The old file is removed only once the FLAC is in place.
 - 📥 **Drop-folder inbox**: tagged files that land in a configured inbox folder (e.g. deemix's download dir) are moved into the library as `Artist/Album (Year)/NN - Title`, with their `.lrc`/cover. Untagged files and duplicates are left alone and listed in the UI. Never point it at a torrent download folder (refused).
 - 🧠 **Intelligent matching scoring**: Evaluates YouTube search results based on title relevance, artist matching, Topic/official status, and duration differences to find studio-quality audio rather than live performances or bootleg covers.
 - ⚡ **Auto-download & post-processing**: Automatically fetches tracks using `yt-dlp`, converts them to high-quality audio (`mp3` or `m4a`) using static `ffmpeg` builds, tags them with metadata (album art, title, artist, track number, year) using `node-id3`, and moves them to organized library folders: `music/{Artist}/{Album} ({Year})/{NN} - {Title}.{ext}`.
 - 📁 **Navidrome M3U Sync**: Organizes local playlists inside Songarr and compiles Navidrome-compatible `.m3u` files in your library directory.
-- 📡 **Navidrome Auto-Scan**: Webhook-based trigger to instruct your Navidrome server to scan the library folder immediately when new tracks are downloaded.
+- 📡 **Navidrome Auto-Scan**: after each worker cycle Songarr asks Navidrome to rescan (Subsonic `startScan`), so new tracks show up without waiting for Navidrome's own schedule.
 - 🔗 **Spotify Sync / Plain Text Importer**:
   - Paste any public Spotify playlist URL: Songarr creates a linked playlist (the same URL never makes a second one), picks the best Deezer match per track (scored on title, artist, duration and remix/live variants; MusicBrainz when Deezer only has covers) and queues it. Unmatched tracks are listed on the playlist, each with a Find button to pick the right track by hand (later syncs keep the pick). It re-syncs every `playlistSyncHours` (default 24, 0 = off; each playlist can set its own interval) or on "Sync now": new tracks are added, dropped ones leave the playlist and its M3U (files stay in the library), order follows Spotify. An "Add only" playlist keeps tracks Spotify drops. The Spotify embed lists at most 100 tracks, so longer playlists stop there. Playlist names are unique ("Name (2)"); the M3U follows the name.
   - Paste lists of text (e.g. `Artist - Song`) to batch-request multiple items at once.
-- 🛠️ **Fully Self-Contained**: Automatically downloads local static builds of `yt-dlp` and `ffmpeg` for your system architecture, running without global system package installations or root privileges.
+- 🛠️ **No system packages needed**: the Docker image bundles `ffmpeg` and `yt-dlp`; for a native install, `setup-binaries.sh` downloads `yt-dlp` and a static x86-64 `ffmpeg` into `./bin`, no root needed.
 
 ---
 
@@ -80,12 +81,16 @@ pm2 start server/index.js --name songarr
 
 ### Option 3: Docker
 
+Releases are published to GHCR (amd64 only for now):
+
 ```bash
-docker build -t songarr .
 docker run -d --name songarr -p 3001:3001 \
   -e PUID=1000 -e PGID=1000 -e TZ=America/Anchorage \
-  -v /path/to/appdata/songarr:/config -v /path/to/music:/music songarr
+  -v /path/to/appdata/songarr:/config -v /path/to/music:/music \
+  ghcr.io/jlesterak/songarr:latest
 ```
+
+Or build it yourself with `docker build -t songarr .`. When using a torrent client or deemix, also mount their download folder, ideally at the same path they use (then no path mapping is needed). The UI shows the running version at the bottom of the sidebar.
 
 The image bundles ffmpeg and yt-dlp (updated at each start; `-e YTDLP_AUTOUPDATE=false` to skip). A DockSTARTer template proposal is in `dockstarter/`. To check the bundled tools and the outside services from inside a running container: `docker exec songarr npm run check:live`.
 
@@ -119,13 +124,19 @@ graph TD
     Express <-->|Fetch Metadata| Deezer[Deezer API]
     Express <-->|Embed Scraper| Spotify[Spotify Playlists]
     
+    Express <-->|Originals when Deezer has only covers| MusicBrainz[MusicBrainz]
+    
     Worker[Background Worker Loop] -->|Process wanted tracks| JSONDB
-    Worker -->|Search Candidates| YouTube[YouTube search]
+    Worker -->|1. Exact Deezer track| Deemix[deemix]
+    Worker -->|2. Search| Indexers[Prowlarr / Jackett]
+    Worker -->|Grab & poll| Client[qBittorrent / Deluge / Transmission / SABnzbd]
+    Worker -->|3. Fallback search| YouTube[YouTube search]
     Worker -->|Execute downloads| YTDLP[Local yt-dlp]
     YTDLP -->|Convert & Transcode| FFMPEG[Local ffmpeg]
     Worker -->|Write ID3 Tags| ID3[node-id3]
     Worker -->|Regenerate Playlists| M3U[M3U playlist creator]
     Worker -->|Scan library trigger| Navidrome[Navidrome Server]
+    Inbox[Drop-folder inbox] -->|Tagged files into the library| Worker
 ```
 
 ---
@@ -133,7 +144,7 @@ graph TD
 ## Testing
 
 ```bash
-npm test             # offline: scoring, database, and the torrent path end to end against the mocks
+npm test             # offline: matching, database, playlists, and the deemix and torrent paths against fakes
 npm run check:live   # needs internet: yt-dlp/ffmpeg runnable, Deezer search, Spotify embed scraper
 ```
 
