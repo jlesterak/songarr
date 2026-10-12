@@ -159,3 +159,21 @@ test('embed artists split on ",<NBSP>", "$" matches "s", and an over-quota answe
   assert.equal(quotaHits, 0);
   assert.equal((await sync.matchTrack(source.tracks[1]))?.id, '4');
 });
+
+test('a manual match fills an unmatched source track and survives the next sync', async () => {
+  spotifyTracks = [['Nobody', 'Ghost', 180], ['Artist', 'Song', 200]];
+  const { playlist: pl } = await sync.linkPlaylist('https://open.spotify.com/playlist/Manual0001');
+  await sync.syncPlaylist(pl.id);
+  const get = () => db.getPlaylists().find(p => p.id === pl.id);
+  assert.deepEqual(get().unmatched, ['Nobody - Ghost']);
+  const key = get().sourceTracks.find(s => !s.trackId).key;
+
+  await assert.rejects(sync.manualMatch(pl.id, 'no-such-key', { id: '3' }), /No such source track/);
+  await sync.manualMatch(pl.id, key, { id: '3', title: 'Other', artist: 'Artist' });
+  assert.deepEqual(get().trackIds, ['3', '2'], 'in source order');
+  assert.deepEqual(get().unmatched, []);
+
+  await sync.syncPlaylist(pl.id);
+  assert.deepEqual(get().trackIds, ['3', '2'], 'kept after a sync');
+  assert.deepEqual(get().unmatched, []);
+});

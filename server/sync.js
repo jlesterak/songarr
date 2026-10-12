@@ -66,8 +66,15 @@ export function pickMatch(results, src) {
 // Spotify embed doesn't expose ISRCs, so matching is by title/artist/duration.
 export async function matchTrack(src) {
   const title = searchTitle(src.title);
-  const results = await utils.searchDeezer(`${src.artist} - ${title}`);
+  // With " - " Deezer returns nothing for some tracks it has, and without it
+  // misses others: try plain first, then dashed.
+  let results = await utils.searchDeezer(`${src.artist} ${title}`);
   let match = pickMatch(results, src);
+  if (!match) {
+    const dashed = await utils.searchDeezer(`${src.artist} - ${title}`);
+    match = pickMatch(dashed, src);
+    results = [...results, ...dashed.filter(d => !results.some(r => r.id === d.id))];
+  }
   if (!match) {
     const withMb = await withFallback(`${src.artist} ${title}`, results);
     if (String(withMb[0]?.id).startsWith('mb:') && scoreMatch(withMb[0], src) >= MATCH_MIN_SCORE) match = withMb[0];
@@ -100,6 +107,35 @@ export async function linkPlaylist(url) {
 }
 
 const running = new Set();
+
+// Source order, then anything the user added by hand.
+function orderTrackIds(pl, sourceTracks) {
+  const oldSourceIds = new Set((pl.sourceTracks || []).map(s => s.trackId).filter(Boolean));
+  const fromSource = [...new Set(sourceTracks.map(s => s.trackId).filter(Boolean))];
+  const manual = pl.trackIds.filter(t => !oldSourceIds.has(t) && !fromSource.includes(t));
+  return [...fromSource, ...manual];
+}
+
+// The user's pick for a source track that didn't match (or matched wrong).
+// Syncs keep it: a source track's trackId is reused by key.
+export async function manualMatch(id, key, track) {
+  const pl = db.getPlaylists().find(p => p.id === id);
+  if (!pl || !pl.sourceId) throw Object.assign(new Error('Playlist is not linked to a Spotify playlist'), { status: 404 });
+  if (running.has(id)) throw Object.assign(new Error('A sync is running; try again when it finishes'), { status: 409 });
+  if (!(pl.sourceTracks || []).some(s => s.key === key)) throw Object.assign(new Error('No such source track'), { status: 404 });
+  if (!track?.id) throw Object.assign(new Error('track with an id is required'), { status: 400 });
+  const full = String(track.id).startsWith('mb:') ? track : (await utils.getDeezerTrackDetails(track.id)) || track;
+  const added = await db.addTrack(full);
+  const sourceTracks = pl.sourceTracks.map(s => s.key === key ? { ...s, trackId: added.id, manual: true } : s);
+  const { playlist } = await db.updatePlaylist(id, {
+    trackIds: orderTrackIds(pl, sourceTracks),
+    sourceTracks,
+    unmatched: sourceTracks.filter(s => !s.trackId).map(s => `${s.artist} - ${s.title}`)
+  });
+  await worker.regenerateM3UPlaylist(db.getPlaylists().find(p => p.id === id));
+  worker.processQueue().catch(err => console.error('[Sync] queue start failed:', err.message));
+  return playlist;
+}
 
 // Re-reads the source and brings the playlist in line. A failed or empty fetch
 // changes nothing.
@@ -142,13 +178,10 @@ export async function syncPlaylist(id, prefetched = null) {
       }
     }
 
-    // Source order, then anything the user added by hand.
-    const oldSourceIds = new Set((pl.sourceTracks || []).map(s => s.trackId).filter(Boolean));
-    const fromSource = [...new Set(sourceTracks.map(s => s.trackId).filter(Boolean))];
-    const manual = pl.trackIds.filter(t => !oldSourceIds.has(t) && !fromSource.includes(t));
+    const trackIds = orderTrackIds(pl, sourceTracks);
     const now = new Date().toISOString();
     const { playlist } = await db.updatePlaylist(id, {
-      trackIds: [...fromSource, ...manual],
+      trackIds,
       sourceTracks,
       unmatched,
       sourceName: source.name || pl.sourceName,
@@ -158,7 +191,7 @@ export async function syncPlaylist(id, prefetched = null) {
     });
     await worker.regenerateM3UPlaylist(db.getPlaylists().find(p => p.id === id));
     worker.processQueue().catch(err => console.error('[Sync] queue start failed:', err.message));
-    console.log(`[Sync] ${playlist.name}: ${fromSource.length} tracks, ${unmatched.length} unmatched.`);
+    console.log(`[Sync] ${playlist.name}: ${sourceTracks.filter(s => s.trackId).length} tracks, ${unmatched.length} unmatched.`);
     return playlist;
   } finally {
     running.delete(id);

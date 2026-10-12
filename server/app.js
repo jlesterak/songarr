@@ -322,6 +322,15 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     res.status(202).json({ success: true, message: 'Sync started' });
   });
 
+  // Manual match: { key, track } links a search result to a source track.
+  app.post('/api/v1/playlists/:id/match', async (req, res) => {
+    try {
+      res.json(await sync.manualMatch(req.params.id, req.body?.key, req.body?.track));
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/v1/playlists/:id/tracks', async (req, res) => {
     const { trackId } = req.body;
     if (!trackId) return res.status(400).json({ error: 'Track ID is required' });

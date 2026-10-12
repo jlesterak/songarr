@@ -67,6 +67,8 @@ export default function App() {
 
   // Playlists UI state
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+  // Manual match for an unmatched source track: { key, query, results, loading, error }
+  const [matchFor, setMatchFor] = useState(null);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistDesc, setNewPlaylistDesc] = useState('');
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
@@ -441,6 +443,36 @@ export default function App() {
       if (res.ok) fetchPlaylists();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const searchManualMatch = async (key, query) => {
+    setMatchFor({ key, query, results: [], loading: true, error: null });
+    try {
+      const res = await fetch(`/api/v1/search?q=${encodeURIComponent(query)}`);
+      const results = res.ok ? await res.json() : [];
+      setMatchFor(m => m && m.key === key ? { ...m, results, loading: false } : m);
+    } catch (e) {
+      setMatchFor(m => m && m.key === key ? { ...m, loading: false, error: e.message } : m);
+    }
+  };
+
+  const handleManualMatch = async (pl, key, track) => {
+    try {
+      const res = await fetch(`/api/v1/playlists/${pl.id}/match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, track })
+      });
+      if (res.ok) {
+        setMatchFor(null);
+        fetchPlaylists();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setMatchFor(m => m && { ...m, error: err.error || `HTTP ${res.status}` });
+      }
+    } catch (e) {
+      setMatchFor(m => m && { ...m, error: e.message });
     }
   };
 
@@ -1012,14 +1044,52 @@ export default function App() {
                   </div>
                 </div>
 
-                {selectedPlaylist.unmatched?.length > 0 && (
+                {selectedPlaylist.unmatched?.length > 0 && (() => {
+                  const missing = (selectedPlaylist.sourceTracks || []).filter(st => !st.trackId);
+                  return (
                   <div className="panel" style={{marginBottom: '2rem'}}>
                     <h3 style={{fontSize: '1.1rem', marginBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>Couldn't match ({selectedPlaylist.unmatched.length})</h3>
                     <ul style={{fontSize: '0.85rem', color: 'var(--color-text-secondary)', paddingLeft: '1.2rem'}}>
-                      {selectedPlaylist.unmatched.map((u, i) => <li key={i}>{u}</li>)}
+                      {missing.length === 0 && selectedPlaylist.unmatched.map((u, i) => <li key={i}>{u}</li>)}
+                      {missing.map(st => (
+                        <li key={st.key} style={{marginBottom: '0.4rem'}}>
+                          {st.artist} - {st.title}{' '}
+                          <button
+                            className="btn btn-secondary"
+                            style={{padding: '0.1rem 0.5rem', fontSize: '0.75rem'}}
+                            onClick={() => matchFor?.key === st.key ? setMatchFor(null) : searchManualMatch(st.key, `${st.artist} ${st.title}`)}
+                          >
+                            {matchFor?.key === st.key ? 'Close' : '🔍 Find'}
+                          </button>
+                          {matchFor?.key === st.key && (
+                            <div style={{margin: '0.5rem 0 0.75rem'}}>
+                              <form onSubmit={e => { e.preventDefault(); searchManualMatch(st.key, matchFor.query); }} style={{display: 'flex', gap: '0.5rem', marginBottom: '0.5rem'}}>
+                                <input
+                                  className="input-text"
+                                  value={matchFor.query}
+                                  onChange={e => setMatchFor({ ...matchFor, query: e.target.value })}
+                                />
+                                <button type="submit" className="btn btn-secondary">Search</button>
+                              </form>
+                              {matchFor.loading && <span className="spinner"></span>}
+                              {matchFor.error && <div style={{color: 'var(--color-danger, #e55)'}}>{matchFor.error}</div>}
+                              {!matchFor.loading && matchFor.results.length === 0 && !matchFor.error && <div>No results; try other words.</div>}
+                              {matchFor.results.slice(0, 10).map(r => (
+                                <div key={r.id} style={{display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.2rem 0'}}>
+                                  <button className="btn btn-primary" style={{padding: '0.1rem 0.5rem', fontSize: '0.75rem'}} onClick={() => handleManualMatch(selectedPlaylist, st.key, r)}>
+                                    Use this
+                                  </button>
+                                  <span>{r.artist} - {r.title} <span style={{color: 'var(--color-text-muted)'}}>({r.album}, {formatDuration(r.duration)}{st.durationMs ? `; Spotify ${formatDuration(Math.round(st.durationMs / 1000))}` : ''})</span></span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </li>
+                      ))}
                     </ul>
                   </div>
-                )}
+                  );
+                })()}
 
                 <div className="panel">
                   <h3 style={{fontSize: '1.25rem', marginBottom: '1rem', fontFamily: 'var(--font-family-heading)'}}>Playlist Tracks</h3>
