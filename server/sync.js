@@ -9,15 +9,26 @@ import * as utils from './utils.js';
 import * as worker from './worker.js';
 import { withFallback } from './musicbrainz.js';
 
-const norm = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+// "$" reads as "s" (Ke$ha = Kesha, A$AP).
+const norm = s => String(s || '').toLowerCase().replace(/\$/g, 's').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 // Credits and remaster tags describe the original; remix/live/etc. do not.
-const baseTitle = t => norm(String(t || '')
+// Title as searched: soundtrack tags ("- From \"Moulin Rouge\" Soundtrack")
+// make Deezer return nothing.
+const searchTitle = t => String(t || '')
+  .replace(/\s-\s(from|taken from)\s.*$/i, '')
+  .replace(/[(\[]\s*(from|taken from)\s[^)\]]*[)\]]/gi, '')
+  .trim() || String(t || '');
+const baseTitle = t => norm(searchTitle(t)
   .replace(/[(\[]\s*(feat|ft|with)\b.*?[)\]]/gi, ' ')
   .replace(/[(\[][^)\]]*remaster[^)\]]*[)\]]/gi, ' ')
   .replace(/\s-\s[^-]*remaster.*$/i, ' ')
   .replace(/\s-\s(feat|ft)\b.*$/i, ' '));
 
 export const MATCH_MIN_SCORE = 70;
+// "(Live from ...)", "- Live at ...": not "Live Your Life".
+const LIVE_TAG = /([(\[]|\s-\s)\s*live\b/i;
+// Karaoke/tribute uploads named after the real artist ("Made famous by Lady Gaga").
+const COVER_ARTIST = /\b(made famous by|famous by|in the style of|originally performed|karaoke|tribute|cover)\b/;
 
 // Score a Deezer result against a Spotify track (100 = perfect).
 export function scoreMatch(cand, src) {
@@ -30,7 +41,9 @@ export function scoreMatch(cand, src) {
   const artists = (src.artists?.length ? src.artists : [src.artist]).map(norm);
   const got = norm(cand.artist);
   if (!artists.some(a => a === got)) score -= artists.some(a => a && (got.includes(a) || a.includes(got))) ? 15 : 50;
+  if (COVER_ARTIST.test(got) && !artists.some(a => COVER_ARTIST.test(a))) score -= 60;
   score -= worker.variantPenalty(cand.title, src.title);
+  if (LIVE_TAG.test(cand.title) && !LIVE_TAG.test(src.title)) score -= 40;
   const want = Math.round((src.durationMs || 0) / 1000);
   if (want > 0 && cand.duration > 0) {
     const diff = Math.abs(want - cand.duration);
@@ -52,10 +65,11 @@ export function pickMatch(results, src) {
 // Deezer track (or MusicBrainz original) for a Spotify track, or null. The
 // Spotify embed doesn't expose ISRCs, so matching is by title/artist/duration.
 export async function matchTrack(src) {
-  const results = await utils.searchDeezer(`${src.artist} - ${src.title}`);
+  const title = searchTitle(src.title);
+  const results = await utils.searchDeezer(`${src.artist} - ${title}`);
   let match = pickMatch(results, src);
   if (!match) {
-    const withMb = await withFallback(`${src.artist} ${src.title}`, results);
+    const withMb = await withFallback(`${src.artist} ${title}`, results);
     if (String(withMb[0]?.id).startsWith('mb:') && scoreMatch(withMb[0], src) >= MATCH_MIN_SCORE) match = withMb[0];
   }
   if (!match) return null;

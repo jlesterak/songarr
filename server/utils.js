@@ -29,13 +29,22 @@ export async function getFileDuration(filePath) {
 }
 
 // === DEEZER METADATA SEARCH ===
+// Deezer allows 50 requests per 5 s and answers over-quota with a 200 and
+// error code 4; wait and retry rather than read that as "no results".
+export const deezerRetry = { attempts: 4, waitMs: 5000 };
+
 export async function searchDeezer(query) {
   try {
     const url = `https://api.deezer.com/search?q=${encodeURIComponent(query)}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Deezer API error: ${response.status}`);
-    
-    const data = await response.json();
+    let data;
+    for (let i = 0; ; i++) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Deezer API error: ${response.status}`);
+      data = await response.json();
+      if (data.error?.code !== 4) break;
+      if (i + 1 >= deezerRetry.attempts) throw new Error('Deezer quota exceeded');
+      await new Promise(r => setTimeout(r, deezerRetry.waitMs));
+    }
     if (!data.data) return [];
     
     return data.data.map(track => ({
@@ -162,8 +171,12 @@ export async function fetchSpotifyPlaylist(playlistUrlOrId) {
     const name = String(entity?.name || entity?.title || '').trim();
     const tracks = items.map(item => {
       const title = item.title || item.name;
-      const artist = item.subtitle || (item.artists && item.artists[0]?.name) || item.artist?.name || 'Unknown Artist';
-      const artists = item.artists ? (Array.isArray(item.artists) ? item.artists.map(a => a.name || a) : [item.artists]) : [artist];
+      // The embed's subtitle joins artists with ",<NBSP>"; a plain ", " is part
+      // of a name ("Tyler, The Creator").
+      const artists = item.artists
+        ? (Array.isArray(item.artists) ? item.artists.map(a => a.name || a) : [item.artists])
+        : String(item.subtitle || item.artist?.name || '').split(/,\u00a0/).map(a => a.trim()).filter(Boolean);
+      const artist = artists[0] || 'Unknown Artist';
       return {
         title,
         artist,

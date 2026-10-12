@@ -19,8 +19,11 @@ const deezer = {
     { id: 1, title: 'Song (Extended Remix)', artist: { name: 'Artist' }, album: { title: 'Remixes' }, duration: 400 },
     { id: 2, title: 'Song', artist: { name: 'Artist' }, album: { title: 'Album' }, duration: 200 }
   ],
-  'Artist - Other': [{ id: 3, title: 'Other', artist: { name: 'Artist' }, album: { title: 'Album' }, duration: 180 }]
+  'Artist - Other': [{ id: 3, title: 'Other', artist: { name: 'Artist' }, album: { title: 'Album' }, duration: 180 }],
+  'Kesha - TiK ToK': [{ id: 4, title: 'TiK ToK', artist: { name: 'Ke$ha' }, album: { title: 'Animal' }, duration: 200 }],
+  'Gwen Stefani - The Sweet Escape': [{ id: 5, title: 'The Sweet Escape', artist: { name: 'Gwen Stefani' }, album: { title: 'Sweet Escape' }, duration: 246 }]
 };
+let quotaHits = 0; // over-quota answers to give before the real one
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {
   url = String(url);
@@ -31,6 +34,7 @@ globalThis.fetch = async (url) => {
     return new Response(html);
   }
   const search = url.match(/api\.deezer\.com\/search\?q=(.*)$/);
+  if (search && quotaHits > 0) { quotaHits--; return Response.json({ error: { type: 'Exception', message: 'Quota limit exceeded', code: 4 } }); }
   if (search) return Response.json({ data: deezer[decodeURIComponent(search[1])] || [] });
   const det = url.match(/api\.deezer\.com\/track\/(\d+)/);
   if (det) {
@@ -46,6 +50,15 @@ const URL1 = 'https://open.spotify.com/playlist/AbC123xyz0';
 test('matching rejects a remix when the original exists', async () => {
   const m = await sync.matchTrack({ title: 'Song', artist: 'Artist', durationMs: 200000 });
   assert.equal(m.id, '2');
+});
+
+test('matching rejects karaoke "made famous by" uploads and live cuts', () => {
+  const src = { title: 'Paparazzi', artist: 'Lady Gaga', artists: ['Lady Gaga'], durationMs: 208000 };
+  assert.ok(sync.scoreMatch({ title: 'Paparazzi', artist: 'Made famous by Lady Gaga', duration: 208 }, src) < sync.MATCH_MIN_SCORE);
+  const mr = { title: 'Lady Marmalade - From "Moulin Rouge" Soundtrack', artist: 'Christina Aguilera', artists: ['Christina Aguilera'], durationMs: 265000 };
+  assert.ok(sync.scoreMatch({ title: 'Lady Marmalade (Live from the Crazy Horse)', artist: 'Christina Aguilera', duration: 268 }, mr) < sync.MATCH_MIN_SCORE);
+  assert.equal(sync.scoreMatch({ title: 'Lady Marmalade', artist: 'Christina Aguilera', duration: 265 }, mr), 100);
+  assert.equal(sync.scoreMatch({ title: 'Live Your Life', artist: 'T.I.', duration: 338 }, { title: 'Live Your Life', artist: 'T.I.', durationMs: 338000 }), 100);
 });
 
 test('re-importing the same URL (any spelling) reuses one playlist', async () => {
@@ -132,4 +145,17 @@ test('a playlist\'s own syncHours overrides the global setting', async () => {
   await sync.syncDue();
   assert.equal(get(a.id).lastSyncAttemptAt, hourAgo);
   assert.notEqual(get(b.id).lastSyncAttemptAt, hourAgo);
+});
+
+test('embed artists split on ",<NBSP>", "$" matches "s", and an over-quota answer is retried', async () => {
+  const utils = await import('../server/utils.js');
+  utils.deezerRetry.waitMs = 0;
+  spotifyTracks = [['Gwen Stefani,\u00a0Akon', 'The Sweet Escape', 246], ['Kesha', 'TiK ToK', 200], ['Tyler, The Creator', 'Nobody Here', 100]];
+  const source = await utils.fetchSpotifyPlaylist('https://open.spotify.com/playlist/Split00001');
+  assert.deepEqual(source.tracks.map(t => t.artists), [['Gwen Stefani', 'Akon'], ['Kesha'], ['Tyler, The Creator']]);
+
+  quotaHits = 2;
+  assert.equal((await sync.matchTrack(source.tracks[0]))?.id, '5');
+  assert.equal(quotaHits, 0);
+  assert.equal((await sync.matchTrack(source.tracks[1]))?.id, '4');
 });
