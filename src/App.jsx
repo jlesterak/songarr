@@ -8,6 +8,13 @@ function formatDuration(sec) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+// Deezer's explicit / clean-edit flag, so a hand pick can take the uncensored cut.
+function ExplicitBadge({ track }) {
+  if (track.explicit) return <span className="format-badge" title="Explicit">E</span>;
+  if (track.edited) return <span className="format-badge" title="Clean edit">Clean</span>;
+  return null;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState({ wanted: 0, snatched: 0, downloading: 0, downloaded: 0, imported: 0, failed: 0, total: 0, librarySize: '0 MB' });
@@ -789,7 +796,7 @@ export default function App() {
                       <p className="track-album" title={track.album}>{track.album}</p>
                       
                       <div className="track-footer">
-                        <span className="track-duration">{formatDuration(track.duration)}</span>
+                        <span className="track-duration">{formatDuration(track.duration)}<ExplicitBadge track={track} /></span>
                         
                         <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
                           {track.status !== 'none' ? (
@@ -1088,7 +1095,7 @@ export default function App() {
                                   <button className="btn btn-primary" style={{padding: '0.1rem 0.5rem', fontSize: '0.75rem'}} onClick={() => handleManualMatch(selectedPlaylist, st.key, r)}>
                                     Use this
                                   </button>
-                                  <span>{r.artist} - {r.title} <span style={{color: 'var(--color-text-muted)'}}>({r.album}, {formatDuration(r.duration)}{st.durationMs ? `; Spotify ${formatDuration(Math.round(st.durationMs / 1000))}` : ''})</span></span>
+                                  <span>{r.artist} - {r.title}<ExplicitBadge track={r} /> <span style={{color: 'var(--color-text-muted)'}}>({r.album}, {formatDuration(r.duration)}{st.durationMs ? `; Spotify ${formatDuration(Math.round(st.durationMs / 1000))}` : ''})</span></span>
                                 </div>
                               ))}
                             </div>

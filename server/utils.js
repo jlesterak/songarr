@@ -33,6 +33,9 @@ export async function getFileDuration(filePath) {
 // error code 4; wait and retry rather than read that as "no results".
 export const deezerRetry = { attempts: 4, waitMs: 5000 };
 
+// Deezer's explicit_content_lyrics: 1 explicit, 3 edited (the clean cut).
+const explicitFlags = t => ({ explicit: t.explicit_content_lyrics === 1 || t.explicit_lyrics === true, edited: t.explicit_content_lyrics === 3 });
+
 export async function searchDeezer(query) {
   try {
     const url = `https://api.deezer.com/search?q=${encodeURIComponent(query)}`;
@@ -56,7 +59,8 @@ export async function searchDeezer(query) {
       albumArt: track.album.cover_big || track.album.cover_medium || '',
       duration: track.duration, // seconds
       isrc: '', // Can be loaded via details if needed
-      link: track.link
+      link: track.link,
+      ...explicitFlags(track)
     }));
   } catch (err) {
     console.error('Deezer search failed:', err);
@@ -79,7 +83,8 @@ export async function getDeezerTrackDetails(trackId) {
       duration: track.duration,
       isrc: track.isrc || '',
       releaseDate: track.release_date || '',
-      trackNumber: track.track_position || 1
+      trackNumber: track.track_position || 1,
+      ...explicitFlags(track)
     };
   } catch (err) {
     console.error(`Failed to get Deezer track details for ${trackId}:`, err);

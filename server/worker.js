@@ -68,10 +68,11 @@ async function triggerNavidromeScan() {
   }
 }
 
-// Variants of a song (extended/remix/instrumental...) that the request didn't
-// ask for. Returns the penalty for a candidate title. "Remixed"/"remastered"
-// don't match: they describe the original.
-const VARIANT_RE = /\b(extended|remix|mix|instrumental|acoustic|karaoke|nightcore|sped up|slowed|reverb|8d)\b/g;
+// Variants of a song (extended/remix/instrumental/clean...) that the request
+// didn't ask for. Returns the penalty for a candidate title. "Remixed"/
+// "remastered" don't match: they describe the original. "Clean" only counts
+// as a tag ("(Clean)", "Clean Version"), not as a word (Clean Bandit).
+const VARIANT_RE = /\b(extended|remix|mix|instrumental|acoustic|karaoke|nightcore|sped up|slowed|reverb|8d|censored|radio edit|clean(?=\s*[)\]]| version| edit))\b/g;
 export function variantPenalty(candidateTitle, trackTitle) {
   const wanted = new Set(trackTitle.toLowerCase().match(VARIANT_RE) || []);
   const found = new Set(candidateTitle.toLowerCase().match(VARIANT_RE) || []);

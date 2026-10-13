@@ -44,6 +44,8 @@ export function scoreMatch(cand, src) {
   if (COVER_ARTIST.test(got) && !artists.some(a => COVER_ARTIST.test(a))) score -= 60;
   score -= worker.variantPenalty(cand.title, src.title);
   if (LIVE_TAG.test(cand.title) && !LIVE_TAG.test(src.title)) score -= 40;
+  // Prefer the uncensored cut; a clean edit still matches if it's all there is.
+  if (cand.edited) score -= 15;
   const want = Math.round((src.durationMs || 0) / 1000);
   if (want > 0 && cand.duration > 0) {
     const diff = Math.abs(want - cand.duration);

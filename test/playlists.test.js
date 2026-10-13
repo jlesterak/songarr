@@ -61,6 +61,14 @@ test('matching rejects karaoke "made famous by" uploads and live cuts', () => {
   assert.equal(sync.scoreMatch({ title: 'Live Your Life', artist: 'T.I.', duration: 338 }, { title: 'Live Your Life', artist: 'T.I.', durationMs: 338000 }), 100);
 });
 
+test('matching prefers the uncensored cut over a clean edit (Bad and Boujee)', () => {
+  const src = { title: 'Bad and Boujee', artist: 'Migos', artists: ['Migos'], durationMs: 332000 };
+  const explicit = { id: '1693337757', title: 'Bad and Boujee', artist: 'Migos', duration: 343, explicit: true };
+  const clean = { id: '1693341367', title: 'Bad and Boujee', artist: 'Migos', duration: 332, edited: true };
+  assert.equal(sync.pickMatch([clean, explicit], src).id, explicit.id);
+  assert.equal(sync.pickMatch([clean], src).id, clean.id);
+});
+
 test('re-importing the same URL (any spelling) reuses one playlist', async () => {
   spotifyTracks = [['Artist', 'Song', 200]];
   const a = await sync.linkPlaylist(URL1);

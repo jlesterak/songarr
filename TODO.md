@@ -12,6 +12,7 @@
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- Prefer uncensored cuts (2026-10-12, Jake): Deezer results carry `explicit` / `edited` (`explicit_content_lyrics` 1 / 3). Playlist matching takes 15 off a clean edit, so the explicit cut wins whenever Deezer has it (Migos "Bad and Boujee": the 332 s clean single used to beat the 343 s album cut on duration); a clean edit still matches if it's the only one. `(Clean)`, "Clean Version/Edit", "Censored" and "Radio Edit" are now variant tags in torrent/YouTube/match scoring (not "Clean Bandit"). Search and Find show E / Clean badges. No setting: always on. 69 tests.
 - v0.2.7 (2026-10-12): Back to Playlists / refresh loop fix. Jake approved the GitHub push and release.
 - "Back to Playlists" fixed (2026-10-12, Jake): the polling effect depended on `selectedPlaylist`, and each playlist fetch replaced it with a new object, so an open playlist re-fetched `/api/v1/playlists` (1.1 MB on icebox) back to back (810 requests in 10 s locally), and a reply landing after Back reopened the playlist. Now one mount effect, a functional update that can't reopen, and a 15 s refresh only while a playlist is open. Checked in headless Chrome, old build vs new.
 - v0.2.6 (2026-10-12): version in the sidebar, idle deemix queue restarted automatically. Jake approved the GitHub push and release.

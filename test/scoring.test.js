@@ -91,4 +91,6 @@ test('scoring penalises extended/remix variants the request lacks (Wake Me Up)',
   const yt = c => scoreCandidate(c, t, '');
   assert.ok(yt({ title: 'Avicii - Wake Me Up', channel: 'Avicii', duration: 247 }) > yt({ title: 'Avicii - Wake Me Up (Extended Mix)', channel: 'Avicii', duration: 369 }));
   assert.equal(variantPenalty('wake me up (extended mix)', 'wake me up (extended mix)'), 0);
+  assert.equal(variantPenalty('humble. (clean)', 'humble.'), 40);
+  assert.equal(variantPenalty('clean bandit - rather be', 'rather be'), 0);
 });
