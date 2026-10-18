@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// The Spotify embed page (server/utils.js fetchSpotifyPlaylist) lists at most this many tracks.
+const SPOTIFY_EMBED_LIMIT = 100;
+
 // Helper to format duration
 function formatDuration(sec) {
   if (!sec) return '0:00';
@@ -75,9 +78,6 @@ export default function App() {
   const [playlistTrackDropdownId, setPlaylistTrackDropdownId] = useState(null);
 
   // Batch import state
-
-// The Spotify embed page (server/utils.js fetchSpotifyPlaylist) lists at most this many tracks.
-const SPOTIFY_EMBED_LIMIT = 100;
   const [textImport, setTextImport] = useState('');
   const [spotifyUrl, setSpotifyUrl] = useState('');
   const [importStatus, setImportStatus] = useState('');
