@@ -75,6 +75,9 @@ export default function App() {
   const [playlistTrackDropdownId, setPlaylistTrackDropdownId] = useState(null);
 
   // Batch import state
+
+// The Spotify embed page (server/utils.js fetchSpotifyPlaylist) lists at most this many tracks.
+const SPOTIFY_EMBED_LIMIT = 100;
   const [textImport, setTextImport] = useState('');
   const [spotifyUrl, setSpotifyUrl] = useState('');
   const [importStatus, setImportStatus] = useState('');
@@ -1004,6 +1007,9 @@ export default function App() {
                         🔗 Linked to <a href={selectedPlaylist.sourceUrl} target="_blank" rel="noreferrer">{selectedPlaylist.sourceName || selectedPlaylist.sourceUrl}</a>
                         {' · '}last synced {selectedPlaylist.lastSyncedAt ? new Date(selectedPlaylist.lastSyncedAt).toLocaleString() : 'never'}
                         {selectedPlaylist.lastSyncError && <span style={{color: 'var(--color-danger, #e55)'}}> · last sync failed: {selectedPlaylist.lastSyncError}</span>}
+                        {(selectedPlaylist.sourceTracks?.length || 0) >= SPOTIFY_EMBED_LIMIT && (
+                          <><br />⚠ Spotify's public embed lists only the first {SPOTIFY_EMBED_LIMIT} tracks, so later ones are not synced. Add them by hand if needed.</>
+                        )}
                       </p>
                     )}
                     {selectedPlaylist.sourceUrl && (
