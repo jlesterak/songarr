@@ -90,7 +90,10 @@ docker run -d --name songarr -p 3001:3001 \
   ghcr.io/jlesterak/songarr:latest
 ```
 
-Or build it yourself with `docker build -t songarr .`. When using a torrent client or deemix, also mount their download folder, ideally at the same path they use (then no path mapping is needed). The UI shows the running version at the bottom of the sidebar.
+Or build it yourself: `scripts/build-local.sh` builds `songarr:local` for your machine and checks the container comes
+up healthy with working ffmpeg, ffprobe and yt-dlp; `--arm64` (or `--all`) does the same for `linux/arm64` under
+emulation, which is how to check aarch64 before the template claims it (the script header has the one-time QEMU
+setup). When using a torrent client or deemix, also mount their download folder, ideally at the same path they use (then no path mapping is needed). The UI shows the running version at the bottom of the sidebar.
 
 The image bundles ffmpeg and yt-dlp (updated at each start; `-e YTDLP_AUTOUPDATE=false` to skip). A DockSTARTer template proposal is in `dockstarter/`. To check the bundled tools and the outside services from inside a running container: `docker exec songarr npm run check:live`.
 
