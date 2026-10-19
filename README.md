@@ -141,6 +141,16 @@ graph TD
 
 ---
 
+## Known Limitations
+
+### YouTube: "Sign in to confirm you're not a bot" (HTTP 429)
+YouTube refuses `yt-dlp` from IP addresses it distrusts: shared/CGNAT connections (satellite and mobile ISPs), VPN exits and data-centre ranges. When that happens the YouTube fallback fails and the track is marked `failed` with the yt-dlp error in its details. Updating yt-dlp (the image does this at each start) does not get past it.
+
+- **FlareSolverr doesn't help.** It solves Cloudflare challenges for indexers; this check is YouTube's own and is mostly about IP reputation.
+- **Few tracks are affected when deemix or torrents are set up**, since YouTube is only the last fallback. Tracks that fail there usually have no Deezer copy and no torrent either.
+- **To retry a failed track**, delete it from the queue and add it again: a fresh entry tries deemix and torrents again before YouTube.
+- Songarr has no cookies option for yt-dlp yet. Cookies from a signed-in browser are the usual workaround elsewhere (e.g. Pinchflat), best with a throwaway Google account.
+
 ## Testing
 
 ```bash
