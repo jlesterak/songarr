@@ -19,7 +19,12 @@ fi
 # Download ffmpeg & ffprobe
 if [ ! -f bin/ffmpeg ] || [ ! -f bin/ffprobe ]; then
   echo "[+] Downloading ffmpeg static build..."
-  curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o bin/ffmpeg.tar.xz
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) echo "No static ffmpeg build for $(uname -m); install ffmpeg yourself." >&2; exit 1 ;;
+  esac
+  curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$arch-static.tar.xz" -o bin/ffmpeg.tar.xz
   echo "[+] Extracting ffmpeg..."
   mkdir -p bin/ffmpeg_temp
   tar -xf bin/ffmpeg.tar.xz -C bin/ffmpeg_temp --strip-components=1
