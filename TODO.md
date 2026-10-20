@@ -8,10 +8,10 @@
 - Navidrome: scan confirmed working on icebox (2026-10-06); still to confirm M3U sync.
 - Confirm live on icebox: re-request Khruangbin "Time (You and I)" is marked imported from the library, and an MP3 in the library upgrades to FLAC via deemix (and via torrent with deemix unset).
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
-- arm64 build: `scripts/build-local.sh --arm64` (or `--all`) on the laptop builds it and smoke-tests the container (owner runs it; the cloud sandbox has no Docker daemon). Publish stays amd64-only until it passes.
 - (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
+- [COMPLETED] 2026-10-19: arm64 build passed on the laptop (`scripts/build-local.sh --all`: amd64 and arm64 both came up healthy with ffmpeg 8.1.2, ffprobe and yt-dlp 2026.08.19). `publish.yml` now builds linux/amd64 + linux/arm64 (QEMU); the next tag publishes the Pi image.
 - [COMPLETED] 2026-10-19: README "Known Limitations" covers YouTube's bot check (HTTP 429 on shared IPs): why it fails, FlareSolverr can't help, retry by re-adding. 11 tracks that hit it on 10-12 re-queued; deemix/torrents got them.
 - Prefer uncensored cuts (2026-10-12, Jake): Deezer results carry `explicit` / `edited` (`explicit_content_lyrics` 1 / 3). Playlist matching takes 15 off a clean edit, so the explicit cut wins whenever Deezer has it (Migos "Bad and Boujee": the 332 s clean single used to beat the 343 s album cut on duration); a clean edit still matches if it's the only one. `(Clean)`, "Clean Version/Edit", "Censored" and "Radio Edit" are now variant tags in torrent/YouTube/match scoring (not "Clean Bandit"). Search and Find show E / Clean badges. No setting: always on. 69 tests.
 - v0.2.7 (2026-10-12): Back to Playlists / refresh loop fix. Jake approved the GitHub push and release.

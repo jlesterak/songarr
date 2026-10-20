@@ -81,7 +81,7 @@ pm2 start server/index.js --name songarr
 
 ### Option 3: Docker
 
-Releases are published to GHCR (amd64 only for now):
+Releases are published to GHCR (amd64, plus arm64 for a Raspberry Pi from the release after v0.2.7):
 
 ```bash
 docker run -d --name songarr -p 3001:3001 \
