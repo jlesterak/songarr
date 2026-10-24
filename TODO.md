@@ -8,7 +8,6 @@
 - Navidrome: scan confirmed working on icebox (2026-10-06); still to confirm M3U sync.
 - Confirm live on icebox: re-request Khruangbin "Time (You and I)" is marked imported from the library, and an MP3 in the library upgrades to FLAC via deemix (and via torrent with deemix unset).
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
-- (Jake) Review `dockstarter/.apps/songarr/` before the upstream PR (needs the public ghcr image first).
 
 ## [COMPLETED]
 (Entries before 2026-10-15 archived 2026-10-24; see git history.)
