@@ -1,5 +1,6 @@
-// Playlists linked to a public Spotify playlist: matching each source track to
-// the best Deezer result (MusicBrainz when Deezer only has covers/remixes),
+// Playlists linked to a source (a public Spotify playlist, or ListenBrainz
+// recommendations/playlists): matching each source track to the best Deezer
+// result (MusicBrainz when Deezer only has covers/remixes),
 // and keeping the Songarr playlist (and its M3U) in step with the source.
 // Music files are never deleted: a track dropped from the source only leaves
 // the playlist, or stays in it (marked gone) when the playlist is add-only.
@@ -8,6 +9,7 @@ import * as db from './db.js';
 import * as utils from './utils.js';
 import * as worker from './worker.js';
 import { withFallback } from './musicbrainz.js';
+import { fetchListenBrainz, listenbrainzIds, isListenBrainzId } from './listenbrainz.js';
 
 // "$" reads as "s" (Ke$ha = Kesha, A$AP).
 const norm = s => String(s || '').toLowerCase().replace(/\$/g, 's').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -64,9 +66,14 @@ export function pickMatch(results, src) {
   return bestScore >= MATCH_MIN_SCORE ? best : null;
 }
 
-// Deezer track (or MusicBrainz original) for a Spotify track, or null. The
-// Spotify embed doesn't expose ISRCs, so matching is by title/artist/duration.
+// Deezer track (or MusicBrainz original) for a source track, or null. By ISRC
+// when the source has them (ListenBrainz; the Spotify embed doesn't), still
+// scored so a wrong ISRC mapping can't slip in; else by title/artist/duration.
 export async function matchTrack(src) {
+  for (const isrc of (src.isrcs || []).slice(0, 3)) {
+    const byIsrc = await utils.getDeezerTrackDetails(`isrc:${isrc}`);
+    if (byIsrc && scoreMatch(byIsrc, src) >= MATCH_MIN_SCORE) return byIsrc;
+  }
   const title = searchTitle(src.title);
   // With " - " Deezer returns nothing for some tracks it has, and without it
   // misses others: try plain first, then dashed.
@@ -86,26 +93,65 @@ export async function matchTrack(src) {
   return (await utils.getDeezerTrackDetails(match.id)) || match;
 }
 
-const sourceKey = s => s.spotifyId || `${norm(s.artist)}|${norm(s.title)}`;
+const sourceKey = s => s.spotifyId || s.sourceTrackId || `${norm(s.artist)}|${norm(s.title)}`;
 
-// Creates the linked playlist for a Spotify URL, or finds the one already
-// linked to that playlist id. Returns { playlist, source }.
-export async function linkPlaylist(url) {
+// { id, name, date?, tracks } for a linked playlist's source id.
+export function fetchSource(sourceId) {
+  return isListenBrainzId(sourceId) ? fetchListenBrainz(sourceId) : utils.fetchSpotifyPlaylist(sourceId);
+}
+
+function sourceUrl(id) {
+  if (!isListenBrainzId(id)) return `https://open.spotify.com/playlist/${id}`;
+  const [, who, kind] = id.split(':');
+  return who === 'playlist' ? `https://listenbrainz.org/playlist/${kind}` : `https://listenbrainz.org/user/${encodeURIComponent(who)}/`;
+}
+
+// Source ids for a pasted URL: one for a Spotify or ListenBrainz playlist,
+// several for a ListenBrainz user.
+export function sourceIds(url) {
+  const lb = listenbrainzIds(url);
+  if (lb) return lb;
   const id = utils.spotifyPlaylistId(url);
-  if (!id) throw new Error('Invalid Spotify playlist URL format');
-  const source = await utils.fetchSpotifyPlaylist(id);
+  if (!id) throw new Error('Not a Spotify or ListenBrainz playlist URL');
+  return [id];
+}
+
+// Creates the linked playlist for a source id (or a URL naming one source), or
+// finds the one already linked to it. Returns { playlist, source }.
+// ListenBrainz recommendation series are add-only: past picks stay listed.
+export async function linkPlaylist(urlOrId) {
+  const [id] = sourceIds(urlOrId);
+  const source = await fetchSource(id);
   let playlist = db.findPlaylistBySource(id);
   if (!playlist) {
+    const lb = isListenBrainzId(id);
     playlist = await db.createPlaylist(source.name || `Spotify ${id}`, '', {
       sourceId: id,
-      sourceUrl: `https://open.spotify.com/playlist/${id}`,
+      sourceType: lb ? 'listenbrainz' : 'spotify',
+      sourceUrl: sourceUrl(id),
       sourceName: source.name || '',
+      ...(lb && !id.startsWith('lb:playlist:') ? { addOnly: true } : {}),
       lastSyncedAt: null,
       sourceTracks: [],
       unmatched: []
     });
   }
   return { playlist, source };
+}
+
+// linkPlaylist for every source a URL names. A source that fails to fetch is
+// reported in `failed` and doesn't stop the others.
+export async function linkSources(url) {
+  const linked = [];
+  const failed = [];
+  for (const id of sourceIds(url)) {
+    try {
+      linked.push(await linkPlaylist(id));
+    } catch (err) {
+      failed.push({ id, error: err.message });
+    }
+  }
+  return { linked, failed };
 }
 
 const running = new Set();
@@ -122,7 +168,7 @@ function orderTrackIds(pl, sourceTracks) {
 // Syncs keep it: a source track's trackId is reused by key.
 export async function manualMatch(id, key, track) {
   const pl = db.getPlaylists().find(p => p.id === id);
-  if (!pl || !pl.sourceId) throw Object.assign(new Error('Playlist is not linked to a Spotify playlist'), { status: 404 });
+  if (!pl || !pl.sourceId) throw Object.assign(new Error('Playlist is not linked to a source playlist'), { status: 404 });
   if (running.has(id)) throw Object.assign(new Error('A sync is running; try again when it finishes'), { status: 409 });
   if (!(pl.sourceTracks || []).some(s => s.key === key)) throw Object.assign(new Error('No such source track'), { status: 404 });
   if (!track?.id) throw Object.assign(new Error('track with an id is required'), { status: 400 });
@@ -148,7 +194,7 @@ export async function syncPlaylist(id, prefetched = null) {
   try {
     let source;
     try {
-      source = prefetched || await utils.fetchSpotifyPlaylist(pl.sourceId);
+      source = prefetched || await fetchSource(pl.sourceId);
       if (!source.tracks.length) throw new Error('Source playlist has no tracks');
     } catch (err) {
       await db.updatePlaylist(id, { lastSyncAttemptAt: new Date().toISOString(), lastSyncError: err.message });
@@ -187,6 +233,7 @@ export async function syncPlaylist(id, prefetched = null) {
       sourceTracks,
       unmatched,
       sourceName: source.name || pl.sourceName,
+      sourceDate: source.date || null,
       lastSyncedAt: now,
       lastSyncAttemptAt: now,
       lastSyncError: null

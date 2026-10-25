@@ -74,3 +74,22 @@ test('Subsonic auth is md5(password + salt) with the salt sent alongside', async
   assert.equal(p.get('t'), crypto.createHash('md5').update('sesameabc123').digest('hex'));
   assert.notEqual(subsonicAuthParams({ navidromePassword: 'x' }).get('s'), subsonicAuthParams({ navidromePassword: 'x' }).get('s'));
 });
+
+test('bulk playlist edit sets sync options on the given playlists only', async () => {
+  const { server, url } = await serve({});
+  try {
+    const [a, b, c] = [await db.createPlaylist('Bulk A'), await db.createPlaylist('Bulk B'), await db.createPlaylist('Bulk C')];
+    const patch = body => fetch(`${url}/api/v1/playlists`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await patch({ ids: [a.id, b.id], patch: { syncHours: 0, addOnly: true } });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).updated, 2);
+    const get = id => db.getPlaylists().find(p => p.id === id);
+    assert.equal(get(a.id).syncHours, 0);
+    assert.equal(get(b.id).addOnly, true);
+    assert.equal(get(c.id).syncHours, undefined, 'unselected playlist untouched');
+    assert.equal((await patch({ ids: [a.id], patch: { syncHours: -1 } })).status, 400);
+    assert.equal((await patch({ ids: [], patch: { addOnly: true } })).status, 400);
+  } finally {
+    server.close();
+  }
+});

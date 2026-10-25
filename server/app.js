@@ -239,21 +239,28 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     })();
   });
 
-  // 8. Spotify playlist import: creates (or reuses) the linked playlist, then
-  // matches and queues in the background. Importing a URL again is a re-sync.
+  // 8. Playlist import (Spotify or ListenBrainz): creates (or reuses) the
+  // linked playlist(s), then matches and queues in the background. Importing a
+  // URL again is a re-sync. A ListenBrainz user links all their sources.
   app.post('/api/v1/tracks/import-playlist', async (req, res) => {
     const { playlistUrl } = req.body;
-    if (!playlistUrl) return res.status(400).json({ error: 'Spotify playlist URL is required' });
+    if (!playlistUrl) return res.status(400).json({ error: 'A Spotify or ListenBrainz URL is required' });
   
     try {
-      const { playlist, source } = await sync.linkPlaylist(playlistUrl);
+      const { linked, failed } = await sync.linkSources(playlistUrl);
+      if (!linked.length) throw new Error(failed.map(f => f.error).join('; ') || 'Nothing to link');
+      const parts = linked.map(({ playlist, source }) => `"${playlist.name}": ${source.tracks.length} tracks`);
+      const skipped = failed.length ? ` Skipped: ${failed.map(f => f.error).join('; ')}.` : '';
       res.json({
         success: true,
-        message: `Playlist "${playlist.name}": ${source.tracks.length} tracks. Matching and queuing in the background.`,
-        count: source.tracks.length,
-        playlistId: playlist.id
+        message: `Playlist ${parts.join(', ')}. Matching and queuing in the background.${skipped}`,
+        count: linked.reduce((n, l) => n + l.source.tracks.length, 0),
+        playlistId: linked[0].playlist.id,
+        playlistIds: linked.map(l => l.playlist.id)
       });
-      sync.syncPlaylist(playlist.id, source).catch(err => console.error('[API Import]', err.message));
+      (async () => {
+        for (const { playlist, source } of linked) await sync.syncPlaylist(playlist.id, source);
+      })().catch(err => console.error('[API Import]', err.message));
     } catch (err) {
       res.status(500).json({ error: 'Playlist import failed', details: err.message });
     }
@@ -288,21 +295,60 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     }
   });
 
-  // Rename (the M3U follows), edit the description, or set the sync options:
-  // syncHours (null = the global setting, 0 = off) and addOnly.
+  // Sync options from a request body: syncHours (null = the global setting,
+  // 0 = off) and addOnly. Returns { patch } or { error }.
+  const syncOptions = ({ syncHours, addOnly } = {}) => {
+    const patch = {};
+    if (syncHours === null || syncHours === '') patch.syncHours = null;
+    else if (syncHours !== undefined) {
+      const h = Number(syncHours);
+      if (!Number.isFinite(h) || h < 0) return { error: 'syncHours must be a number >= 0, or null' };
+      patch.syncHours = h;
+    }
+    if (typeof addOnly === 'boolean') patch.addOnly = addOnly;
+    return { patch };
+  };
+
+  // Bulk edit: { ids, patch: { syncHours?, addOnly? } } on several playlists.
+  app.patch('/api/v1/playlists', async (req, res) => {
+    const { ids, patch: body } = req.body || {};
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' });
+    const { patch, error } = syncOptions(body);
+    if (error) return res.status(400).json({ error });
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'patch needs syncHours or addOnly' });
+    try {
+      const updated = [];
+      for (const id of new Set(ids)) {
+        const done = await db.updatePlaylist(id, patch);
+        if (done) updated.push(done.playlist);
+      }
+      res.json({ success: true, updated: updated.length, playlists: updated });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to update playlists', details: err.message });
+    }
+  });
+
+  // Bulk "Sync now": linked playlists among { ids }, one after another in the
+  // background.
+  app.post('/api/v1/playlists/sync', (req, res) => {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' });
+    const wanted = new Set(ids);
+    const linked = db.getPlaylists().filter(p => wanted.has(p.id) && p.sourceId).map(p => p.id);
+    (async () => {
+      for (const id of linked) await sync.syncPlaylist(id).catch(err => console.error('[API Sync]', err.message));
+    })();
+    res.status(202).json({ success: true, message: `Syncing ${linked.length} linked playlist(s)`, count: linked.length });
+  });
+
+  // Rename (the M3U follows), edit the description, or set the sync options.
   app.patch('/api/v1/playlists/:id', async (req, res) => {
     try {
-      const { name, description, syncHours, addOnly } = req.body;
-      const patch = {};
+      const { name, description } = req.body;
+      const { patch, error } = syncOptions(req.body);
+      if (error) return res.status(400).json({ error });
       if (typeof name === 'string' && name.trim()) patch.name = name;
       if (typeof description === 'string') patch.description = description;
-      if (syncHours === null || syncHours === '') patch.syncHours = null;
-      else if (syncHours !== undefined) {
-        const h = Number(syncHours);
-        if (!Number.isFinite(h) || h < 0) return res.status(400).json({ error: 'syncHours must be a number >= 0, or null' });
-        patch.syncHours = h;
-      }
-      if (typeof addOnly === 'boolean') patch.addOnly = addOnly;
       const done = await db.updatePlaylist(req.params.id, patch);
       if (!done) return res.status(404).json({ error: 'Playlist not found' });
       if (done.playlist.name !== done.oldName) await worker.removeM3U(done.oldName);
@@ -317,7 +363,7 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
   app.post('/api/v1/playlists/:id/sync', (req, res) => {
     const pl = db.getPlaylists().find(p => p.id === req.params.id);
     if (!pl) return res.status(404).json({ error: 'Playlist not found' });
-    if (!pl.sourceId) return res.status(400).json({ error: 'Playlist is not linked to a Spotify playlist' });
+    if (!pl.sourceId) return res.status(400).json({ error: 'Playlist is not linked to a source playlist' });
     sync.syncPlaylist(pl.id).catch(err => console.error('[API Sync]', err.message));
     res.status(202).json({ success: true, message: 'Sync started' });
   });
