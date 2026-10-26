@@ -19,6 +19,8 @@ With Songarr, you can discover a song (via Shazam, streaming, etc.), search it o
 - 📡 **Navidrome Auto-Scan**: after each worker cycle Songarr asks Navidrome to rescan (Subsonic `startScan`), so new tracks show up without waiting for Navidrome's own schedule.
 - 🔗 **Spotify Sync / Plain Text Importer**:
   - Paste any public Spotify playlist URL: Songarr creates a linked playlist (the same URL never makes a second one), picks the best Deezer match per track (scored on title, artist, duration and remix/live variants; MusicBrainz when Deezer only has covers) and queues it. Unmatched tracks are listed on the playlist, each with a Find button to pick the right track by hand (later syncs keep the pick). It re-syncs every `playlistSyncHours` (default 24, 0 = off; each playlist can set its own interval) or on "Sync now": new tracks are added, dropped ones leave the playlist and its M3U (files stay in the library), order follows Spotify. An "Add only" playlist keeps tracks Spotify drops. The Spotify embed lists at most 100 tracks, so longer playlists stop there. Playlist names are unique ("Name (2)"); the M3U follows the name.
+  - ListenBrainz recommendations: paste a ListenBrainz user (`https://listenbrainz.org/user/NAME/` or `lb:NAME`) to link three playlists: **ListenBrainz Recommended** (the 50 best-scored recordings ListenBrainz recommends that you haven't played), **Weekly Exploration** and **Weekly Jams** (each follows the newest playlist of that weekly series). They default to Add only, so past picks stay. Single ListenBrainz playlists (`https://listenbrainz.org/playlist/<mbid>`) link like Spotify ones. ListenBrainz gives ISRCs, so these match on Deezer by ISRC first. Scrobble to ListenBrainz (Navidrome can) so the recommendations follow what you play. Public data, no token needed.
+  - Bulk edit: tick playlists (or Select all / linked) to set auto-sync, Add only or Sync now on all of them at once.
   - Paste lists of text (e.g. `Artist - Song`) to batch-request multiple items at once.
 - 🛠️ **No system packages needed**: the Docker image bundles `ffmpeg` and `yt-dlp`; for a native install, `setup-binaries.sh` downloads `yt-dlp` and a static x86-64 `ffmpeg` into `./bin`, no root needed.
 
@@ -126,6 +128,7 @@ graph TD
     Express <-->|Read / Write| JSONDB[(JSON File DB)]
     Express <-->|Fetch Metadata| Deezer[Deezer API]
     Express <-->|Embed Scraper| Spotify[Spotify Playlists]
+    Express <-->|API| ListenBrainz[ListenBrainz Recommendations]
     
     Express <-->|Originals when Deezer has only covers| MusicBrainz[MusicBrainz]
     
