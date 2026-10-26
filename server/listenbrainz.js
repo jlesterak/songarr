@@ -29,7 +29,10 @@ export function listenbrainzIds(input) {
   m = s.match(/^lb:([^:\s/]+):([a-z-]+)$/);
   if (m) return KINDS.includes(m[2]) ? [s] : null;
   m = s.match(/^lb:([^:\s/]+)$/) || s.match(/listenbrainz\.org\/user\/([^/?#\s]+)/i);
-  return m ? KINDS.map(k => `lb:${decodeURIComponent(m[1])}:${k}`) : null;
+  if (!m) return null;
+  let user;
+  try { user = decodeURIComponent(m[1]); } catch { return null; }
+  return user && user !== 'playlist' ? KINDS.map(k => `lb:${user}:${k}`) : null;
 }
 
 export const isListenBrainzId = id => String(id || '').startsWith('lb:');
