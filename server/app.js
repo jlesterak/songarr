@@ -250,7 +250,7 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
       const { linked, failed } = await sync.linkSources(playlistUrl);
       if (!linked.length) throw new Error(failed.map(f => f.error).join('; ') || 'Nothing to link');
       const parts = linked.map(({ playlist, source }) => `"${playlist.name}": ${source.tracks.length} tracks`);
-      const skipped = failed.length ? ` Skipped: ${failed.map(f => f.error).join('; ')}.` : '';
+      const skipped = failed.length ? ` Skipped: ${failed.map(f => `${f.id} (${f.error})`).join('; ')}.` : '';
       res.json({
         success: true,
         message: `Playlist ${parts.join(', ')}. Matching and queuing in the background.${skipped}`,

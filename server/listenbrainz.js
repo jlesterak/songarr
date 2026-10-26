@@ -34,10 +34,18 @@ export function listenbrainzIds(input) {
 
 export const isListenBrainzId = id => String(id || '').startsWith('lb:');
 
-// One retry on 429, after the wait ListenBrainz asks for.
+// One retry on 429 (after the wait ListenBrainz asks for) or a dropped
+// connection (after 5 s).
 async function getJson(urlPath) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(baseUrl() + urlPath, { headers: { 'User-Agent': userAgent } });
+    let res;
+    try {
+      res = await fetch(baseUrl() + urlPath, { headers: { 'User-Agent': userAgent } });
+    } catch (err) {
+      if (attempt > 0) throw new Error(`ListenBrainz ${urlPath.split('?')[0]}: ${err.cause?.code || err.message}`);
+      await new Promise(r => setTimeout(r, 5000));
+      continue;
+    }
     if (res.status === 429 && attempt === 0) {
       const wait = Math.min(Number(res.headers.get('X-RateLimit-Reset-In')) || 5, 60);
       await new Promise(r => setTimeout(r, wait * 1000));

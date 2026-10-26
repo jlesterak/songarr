@@ -3,6 +3,20 @@ import React, { useState, useEffect, useRef } from 'react';
 // The Spotify embed page (server/utils.js fetchSpotifyPlaylist) lists at most this many tracks.
 const SPOTIFY_EMBED_LIMIT = 100;
 
+// Auto-sync choices for a playlist (value '' = the global setting).
+function SyncIntervalOptions({ defaultHours }) {
+  return (
+    <>
+      <option value="">Default ({defaultHours ? `every ${defaultHours} h` : 'off'})</option>
+      <option value="0">Off</option>
+      <option value="6">Every 6 hours</option>
+      <option value="12">Every 12 hours</option>
+      <option value="24">Daily</option>
+      <option value="168">Weekly</option>
+    </>
+  );
+}
+
 // Helper to format duration
 function formatDuration(sec) {
   if (!sec) return '0:00';
@@ -83,6 +97,9 @@ export default function App() {
   const [newPlaylistDesc, setNewPlaylistDesc] = useState('');
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
   const [playlistTrackDropdownId, setPlaylistTrackDropdownId] = useState(null);
+  // Bulk edit: ids ticked in the playlists grid
+  const [bulkIds, setBulkIds] = useState([]);
+  const [bulkStatus, setBulkStatus] = useState('');
 
   // Batch import state
   const [textImport, setTextImport] = useState('');
@@ -462,6 +479,38 @@ export default function App() {
     }
   };
 
+  const toggleBulk = (id) => setBulkIds(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]);
+
+  const handleBulkOptions = async (patch) => {
+    try {
+      const res = await fetch('/api/v1/playlists', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: bulkIds, patch })
+      });
+      const data = await res.json();
+      setBulkStatus(res.ok ? `Updated ${data.updated} playlist(s).` : `Failed: ${data.error}`);
+      if (res.ok) fetchPlaylists();
+    } catch (e) {
+      setBulkStatus('Failed: ' + e.message);
+    }
+  };
+
+  const handleBulkSync = async () => {
+    try {
+      const res = await fetch('/api/v1/playlists/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: bulkIds })
+      });
+      const data = await res.json();
+      setBulkStatus(res.ok ? `${data.message}.` : `Failed: ${data.error}`);
+      setTimeout(fetchPlaylists, 3000);
+    } catch (e) {
+      setBulkStatus('Failed: ' + e.message);
+    }
+  };
+
   const searchManualMatch = async (key, query) => {
     setMatchFor({ key, query, results: [], loading: true, error: null });
     try {
@@ -520,7 +569,7 @@ export default function App() {
   const handleSpotifyImport = async () => {
     if (!spotifyUrl.trim()) return;
     setImportLoading(true);
-    setImportStatus('Parsing Spotify playlist and matching tracks...');
+    setImportStatus('Reading the playlist and matching tracks...');
     try {
       const res = await fetch('/api/v1/tracks/import-playlist', {
         method: 'POST',
@@ -630,7 +679,7 @@ export default function App() {
               {activeTab === 'search' && 'Find tracks on Deezer catalog and add to library.'}
               {activeTab === 'queue' && 'Review monitored tracks, downloads, and errors.'}
               {activeTab === 'playlists' && (selectedPlaylist ? selectedPlaylist.description || 'Custom playlist details.' : 'Organize tracks into synced Subsonic-compatible M3U files.')}
-              {activeTab === 'import' && 'Import Spotify playlists or bulk text tracks into local acquisition.'}
+              {activeTab === 'import' && 'Import Spotify or ListenBrainz playlists, or bulk text tracks, into local acquisition.'}
               {activeTab === 'settings' && 'Manage file directories, transcoding formats, and media server details.'}
             </p>
           </div>
@@ -983,12 +1032,54 @@ export default function App() {
                   </form>
                 )}
 
+                {playlists.length > 0 && (
+                  <div className="panel" style={{marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', fontSize: '0.85rem'}}>
+                    <span>Select:</span>
+                    <button className="btn btn-secondary" onClick={() => setBulkIds(playlists.map(p => p.id))}>All</button>
+                    <button className="btn btn-secondary" onClick={() => setBulkIds(playlists.filter(p => p.sourceId).map(p => p.id))}>Linked</button>
+                    <button className="btn btn-secondary" onClick={() => { setBulkIds([]); setBulkStatus(''); }}>None</button>
+                    {bulkIds.length > 0 && (
+                      <>
+                        <strong>{bulkIds.length} selected</strong>
+                        <label>
+                          Auto-sync{' '}
+                          <select
+                            className="input-text"
+                            style={{width: 'auto', display: 'inline-block', padding: '0.25rem 0.5rem'}}
+                            value="keep"
+                            onChange={e => handleBulkOptions({ syncHours: e.target.value === '' ? null : Number(e.target.value) })}
+                          >
+                            <option value="keep" disabled>Set…</option>
+                            <SyncIntervalOptions defaultHours={settings.playlistSyncHours} />
+                          </select>
+                        </label>
+                        <button className="btn btn-secondary" onClick={() => handleBulkOptions({ addOnly: true })}>Add only: on</button>
+                        <button className="btn btn-secondary" onClick={() => handleBulkOptions({ addOnly: false })}>Add only: off</button>
+                        <button className="btn btn-secondary" onClick={handleBulkSync}>🔄 Sync now</button>
+                      </>
+                    )}
+                    {bulkStatus && <span style={{color: 'var(--color-text-muted)'}}>{bulkStatus}</span>}
+                  </div>
+                )}
+
                 <div className="playlists-grid">
                   {playlists.map(pl => (
                     <div key={pl.id} className="playlist-card" onClick={() => setSelectedPlaylist(pl)}>
-                      <h3 className="playlist-name">📁 {pl.name}</h3>
+                      <h3 className="playlist-name">
+                        <input
+                          type="checkbox"
+                          checked={bulkIds.includes(pl.id)}
+                          onClick={e => e.stopPropagation()}
+                          onChange={() => toggleBulk(pl.id)}
+                          style={{marginRight: '0.5rem'}}
+                        />
+                        📁 {pl.name}
+                      </h3>
                       <p className="playlist-desc">{pl.description || 'No description'}</p>
-                      <span className="playlist-count">{pl.tracks?.length || 0} Tracks</span>
+                      <span className="playlist-count">
+                        {pl.tracks?.length || 0} Tracks
+                        {pl.sourceId && <> · {pl.sourceType === 'listenbrainz' ? 'ListenBrainz' : 'Spotify'}{pl.syncHours === 0 ? ', sync off' : ''}{pl.addOnly ? ', add only' : ''}</>}
+                      </span>
                     </div>
                   ))}
                   {playlists.length === 0 && (
@@ -1014,7 +1105,8 @@ export default function App() {
                         🔗 Linked to <a href={selectedPlaylist.sourceUrl} target="_blank" rel="noreferrer">{selectedPlaylist.sourceName || selectedPlaylist.sourceUrl}</a>
                         {' · '}last synced {selectedPlaylist.lastSyncedAt ? new Date(selectedPlaylist.lastSyncedAt).toLocaleString() : 'never'}
                         {selectedPlaylist.lastSyncError && <span style={{color: 'var(--color-danger, #e55)'}}> · last sync failed: {selectedPlaylist.lastSyncError}</span>}
-                        {(selectedPlaylist.sourceTracks?.length || 0) >= SPOTIFY_EMBED_LIMIT && (
+                        {selectedPlaylist.sourceDate && <> · source from {new Date(selectedPlaylist.sourceDate).toLocaleDateString()}</>}
+                        {selectedPlaylist.sourceType !== 'listenbrainz' && (selectedPlaylist.sourceTracks?.length || 0) >= SPOTIFY_EMBED_LIMIT && (
                           <><br />⚠ Spotify's public embed lists only the first {SPOTIFY_EMBED_LIMIT} tracks, so later ones are not synced. Add them by hand if needed.</>
                         )}
                       </p>
@@ -1029,24 +1121,19 @@ export default function App() {
                             value={selectedPlaylist.syncHours ?? ''}
                             onChange={e => handlePlaylistOptions(selectedPlaylist, { syncHours: e.target.value === '' ? null : Number(e.target.value) })}
                           >
-                            <option value="">Default ({settings.playlistSyncHours ? `every ${settings.playlistSyncHours} h` : 'off'})</option>
-                            <option value="0">Off</option>
-                            <option value="6">Every 6 hours</option>
-                            <option value="12">Every 12 hours</option>
-                            <option value="24">Daily</option>
-                            <option value="168">Weekly</option>
+                            <SyncIntervalOptions defaultHours={settings.playlistSyncHours} />
                             {![null, undefined, 0, 6, 12, 24, 168].includes(selectedPlaylist.syncHours) && (
                               <option value={selectedPlaylist.syncHours}>Every {selectedPlaylist.syncHours} h</option>
                             )}
                           </select>
                         </label>
-                        <label title="Tracks removed from the Spotify playlist stay in this playlist">
+                        <label title="Tracks removed from the source playlist stay in this playlist">
                           <input
                             type="checkbox"
                             checked={!!selectedPlaylist.addOnly}
                             onChange={e => handlePlaylistOptions(selectedPlaylist, { addOnly: e.target.checked })}
                           />{' '}
-                          Add only (keep tracks Spotify removes)
+                          Add only (keep tracks the source removes)
                         </label>
                       </div>
                     )}
@@ -1173,13 +1260,13 @@ export default function App() {
           <div className="settings-grid">
             {/* Spotify Importer */}
             <div className="panel">
-              <h2 className="page-title" style={{fontSize: '1.5rem', marginBottom: '1.5rem'}}>Spotify Playlist Sync</h2>
+              <h2 className="page-title" style={{fontSize: '1.5rem', marginBottom: '1.5rem'}}>Playlist Sync</h2>
               <p style={{color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
-                Paste the URL of any public Spotify playlist. Songarr creates a linked playlist, matches each track to the best Deezer result (MusicBrainz when Deezer only has remixes) and queues it. Importing the same URL again just re-syncs it; tracks dropped from Spotify leave the playlist but stay in your library.
+                Paste the URL of any public Spotify or ListenBrainz playlist, or a ListenBrainz user (<code>https://listenbrainz.org/user/NAME/</code> or <code>lb:NAME</code>) to link their recommendations, Weekly Exploration and Weekly Jams. Songarr creates a linked playlist, matches each track to the best Deezer result (MusicBrainz when Deezer only has remixes) and queues it. Importing the same URL again just re-syncs it; tracks dropped from Spotify leave the playlist but stay in your library.
               </p>
               
               <div className="form-group">
-                <label className="form-label">Spotify Playlist URL</label>
+                <label className="form-label">Spotify or ListenBrainz URL</label>
                 <input 
                   type="text" 
                   className="input-text" 
@@ -1194,7 +1281,7 @@ export default function App() {
                 onClick={handleSpotifyImport}
                 disabled={importLoading || !spotifyUrl.trim()}
               >
-                {importLoading ? <span className="spinner"></span> : '⚡'} Start Spotify Import
+                {importLoading ? <span className="spinner"></span> : '⚡'} Start Import
               </button>
             </div>
 
