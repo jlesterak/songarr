@@ -42,6 +42,8 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    # A healthy build takes ~3 min; arm64 under QEMU has hung for hours (v0.2.9).
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
