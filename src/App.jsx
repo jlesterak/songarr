@@ -3,6 +3,23 @@ import React, { useState, useEffect, useRef } from 'react';
 // The Spotify embed page (server/utils.js fetchSpotifyPlaylist) lists at most this many tracks.
 const SPOTIFY_EMBED_LIMIT = 100;
 
+// Deezer covers come at 1000 px; the CDN serves any size from the same path.
+const smallArt = url => String(url).replace(/\/\d+x\d+-(\d+-\d+-\d+-\d+\.jpg)$/, '/250x250-$1');
+
+// Playlist card cover: a 2x2 mosaic of its first four album covers, one cover
+// when it has fewer, a note when it has none. A cover that fails to load hides.
+function PlaylistCover({ tracks }) {
+  const arts = [...new Set((tracks || []).map(t => t.albumArt).filter(Boolean))].slice(0, 4).map(smallArt);
+  const hide = e => { e.currentTarget.style.visibility = 'hidden'; };
+  if (!arts.length) return <div className="playlist-cover playlist-cover-empty">🎵</div>;
+  if (arts.length < 4) return <div className="playlist-cover"><img src={arts[0]} alt="" loading="lazy" onError={hide} /></div>;
+  return (
+    <div className="playlist-cover playlist-cover-grid">
+      {arts.map(a => <img key={a} src={a} alt="" loading="lazy" onError={hide} />)}
+    </div>
+  );
+}
+
 // Auto-sync choices for a playlist (value '' = the global setting).
 function SyncIntervalOptions({ defaultHours }) {
   return (
@@ -1065,6 +1082,7 @@ export default function App() {
                 <div className="playlists-grid">
                   {playlists.map(pl => (
                     <div key={pl.id} className="playlist-card" onClick={() => setSelectedPlaylist(pl)}>
+                      <PlaylistCover tracks={pl.tracks} />
                       <h3 className="playlist-name">
                         <input
                           type="checkbox"
@@ -1073,7 +1091,7 @@ export default function App() {
                           onChange={() => toggleBulk(pl.id)}
                           style={{marginRight: '0.5rem'}}
                         />
-                        📁 {pl.name}
+                        {pl.name}
                       </h3>
                       <p className="playlist-desc">{pl.description || 'No description'}</p>
                       <span className="playlist-count">
