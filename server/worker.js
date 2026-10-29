@@ -322,6 +322,32 @@ async function removeReplaced(track, destFile) {
   );
 }
 
+// "Wrong version": delete the imported file, block where it came from, and
+// queue the track again so the next source or candidate gets a turn. Library
+// and inbox files need no block: once deleted, nothing finds them again.
+export async function rejectTrack(id) {
+  const track = db.getTrack(id);
+  if (!track) return null;
+  const settings = db.getSettings();
+  const block = { youtube: track.sourceUrl && `youtube:${track.sourceUrl}`, torrent: track.torrentName && `torrent:${track.torrentName}`, deemix: 'deemix' }[track.source];
+  if (track.torrentHash) {
+    await utils.getDownloadClient(settings).removeTorrent(track.torrentHash, true).catch(err =>
+      console.warn(`[Worker] Couldn't remove torrent for "${track.title}": ${err.message}`));
+  }
+  if (track.filePath) {
+    await fs.rm(track.filePath, { force: true });
+    await fs.rmdir(path.dirname(track.filePath)).catch(() => {}); // only if now empty
+  }
+  console.log(`[Worker] Rejected "${track.title}" (${block || track.source}); re-queuing.`);
+  const updated = await db.updateTrack(id, {
+    status: 'wanted', error: null, filePath: '', source: null, sourceUrl: null, format: null, bitrate: null,
+    torrentHash: null, torrentName: null, seeding: false, deemixUuid: null, replaces: null, triedTorrents: [],
+    blocked: [...new Set([...(track.blocked || []), ...(block ? [block] : [])])]
+  });
+  await refreshPlaylistsFor(id);
+  return updated;
+}
+
 async function refreshPlaylistsFor(trackId) {
   for (const pl of db.getPlaylists()) {
     if (pl.trackIds.includes(trackId)) await regenerateM3UPlaylist(pl);
@@ -687,10 +713,12 @@ async function downloadDirectFromYouTube(track, settings, format, quality) {
     const queryText = `${searchTerms} audio`;
     
     console.log(`[Worker] Searching YouTube for: "${queryText}"`);
-    const candidates = await utils.searchYouTube(queryText, 5);
+    const blocked = track.blocked || [];
+    const found = await utils.searchYouTube(queryText, 5);
+    const candidates = found.filter(c => !blocked.includes(`youtube:${c.url}`));
     
     if (candidates.length === 0) {
-      throw new Error('No candidates found on YouTube');
+      throw new Error(found.length ? 'Every YouTube candidate is blocked' : 'No candidates found on YouTube');
     }
 
     const scored = candidates.map(c => ({
@@ -741,6 +769,7 @@ async function downloadDirectFromYouTube(track, settings, format, quality) {
     await db.updateTrack(track.id, {
       status: 'imported',
       source: 'youtube',
+      sourceUrl: chosenVideo.url,
       torrentHash: null,
       torrentName: null,
       seeding: false,
@@ -803,7 +832,8 @@ export async function processQueue() {
         const upgrade = existing && format === 'flac' && !isLossless(existing);
         const torrentMode = method === 'torrent' && settings.prowlarrUrl;
 
-        if (settings.deemixUrl && !track.deemixTried && isDeezerId(track.id) && (!existing || upgrade)) {
+        const blocked = track.blocked || [];
+        if (settings.deemixUrl && !track.deemixTried && !blocked.includes('deemix') && isDeezerId(track.id) && (!existing || upgrade)) {
           try {
             if (upgrade) console.log(`[Worker] Upgrading ${existing} to FLAC via deemix.`);
             await startDeemix(track, settings, format, existing);
@@ -835,7 +865,7 @@ export async function processQueue() {
               throw new Error(`${tried.length} torrents stalled`);
             }
             const candidates = (await utils.searchIndexer(query, settings))
-              .filter(c => !tried.includes(c.title))
+              .filter(c => !tried.includes(c.title) && !blocked.includes(`torrent:${c.title}`))
               .filter(c => !existing || claimsLossless(c.title));
             
             if (candidates.length === 0) {

@@ -329,6 +329,20 @@ export default function App() {
     }
   };
 
+  // Wrong version: delete the file, block its source, download another
+  const handleRejectTrack = async (track) => {
+    if (!confirm(`Delete "${track.title}" and download a different version?`)) return;
+    try {
+      const res = await fetch(`/api/v1/tracks/${track.id}/reject`, { method: 'POST' });
+      if (res.ok) {
+        fetchTracks();
+        fetchStats();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleTestConnections = async () => {
     setTestingConnection(true);
     setTestResults(null);
@@ -815,6 +829,11 @@ export default function App() {
                             {track.error && <div className="error-msg" title={track.error}>{track.error}</div>}
                           </td>
                           <td>
+                            {track.status === 'imported' && (
+                              <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: delete the file and download another" onClick={() => handleRejectTrack(track)}>
+                                🔁
+                              </button>
+                            )}
                             <button className="btn btn-danger" style={{padding: '0.4rem 0.8rem'}} onClick={() => handleDeleteTrack(track.id)}>
                               🗑️
                             </button>
@@ -995,6 +1014,11 @@ export default function App() {
                         </td>
                         <td>{new Date(track.createdAt).toLocaleString()}</td>
                         <td>
+                          {track.status === 'imported' && (
+                            <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: delete the file and download another" onClick={() => handleRejectTrack(track)}>
+                              🔁
+                            </button>
+                          )}
                           <button className="btn btn-danger" style={{padding: '0.4rem 0.8rem'}} onClick={() => handleDeleteTrack(track.id)}>
                             🗑️ Delete
                           </button>

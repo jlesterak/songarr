@@ -178,7 +178,7 @@ export async function addTrack(trackData) {
 
   // Lifecycle fields belong to the server: a client posting a search result
   // as-is (status 'none') must not stop the track from being queued.
-  const { status, error, createdAt, filePath, torrentHash, deemixUuid, deemixTried, ...metadata } = trackData;
+  const { status, error, createdAt, filePath, torrentHash, deemixUuid, deemixTried, blocked, sourceUrl, ...metadata } = trackData;
   const track = {
     id: trackData.id,
     title: trackData.title,
