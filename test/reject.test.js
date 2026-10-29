@@ -28,3 +28,21 @@ test('rejecting a wrong version deletes the file, blocks its source and re-queue
   assert.ok(!fs.existsSync(dir), 'file and its now-empty album folder are gone');
   assert.doesNotMatch(fs.readFileSync(worker.m3uPath('Rejects'), 'utf-8'), /Baby Got Back/);
 });
+
+test('swapping to another match re-points linked playlists and remembers the rejected id', async () => {
+  const sync = await import('../server/sync.js');
+  await db.addTrack({ id: '111', title: 'Baby Got Back (Techno Remix)', artists: ['Sir Mix-a-Lot'] });
+  const pl = await db.createPlaylist('Linked', '', { sourceId: 'spotify:x' });
+  await db.updatePlaylist(pl.id, {
+    trackIds: ['111'],
+    sourceTracks: [{ key: 'k', artist: 'Sir Mix-a-Lot', title: 'Baby Got Back', trackId: '111' }]
+  });
+
+  const added = await sync.replaceMatch('111', { id: 'mb:right', title: 'Baby Got Back', artists: ['Sir Mix-a-Lot'], album: 'Mack Daddy' });
+  assert.equal(added.id, 'mb:right');
+  assert.deepEqual(added.rejectedIds, ['111']);
+  assert.equal(db.getTrack('111'), null);
+  const after = db.getPlaylists().find(p => p.id === pl.id);
+  assert.deepEqual(after.trackIds, ['mb:right']);
+  assert.deepEqual(after.sourceTracks[0], { key: 'k', artist: 'Sir Mix-a-Lot', title: 'Baby Got Back', trackId: 'mb:right', manual: true });
+});

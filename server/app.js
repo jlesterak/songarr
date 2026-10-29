@@ -185,17 +185,30 @@ export async function createApp({ mocks = process.env.SONGARR_MOCKS === '1' } = 
     }
   });
 
-  // Wrong version: delete the file, block its source, grab another
+  // Review a track: other versions to swap to (?q= overrides the search)
+  app.get('/api/v1/tracks/:id/alternatives', async (req, res) => {
+    try {
+      res.json(await sync.alternatives(req.params.id, String(req.query.q || '')));
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
+  // Wrong version. { track }: swap to that match. No body: keep the match,
+  // delete the file, block its source and grab another.
   app.post('/api/v1/tracks/:id/reject', async (req, res) => {
     const track = db.getTrack(req.params.id);
     if (!track) return res.status(404).json({ error: 'Track not found' });
-    if (track.status !== 'imported') return res.status(409).json({ error: 'Only imported tracks can be rejected' });
+    const pick = req.body?.track;
+    if (['snatched', 'downloading', 'downloaded'].includes(track.status) || (!pick && track.status !== 'imported')) {
+      return res.status(409).json({ error: pick ? 'Track is downloading; try again when it finishes' : 'Only imported tracks can be rejected' });
+    }
     try {
-      const updated = await worker.rejectTrack(track.id);
+      const updated = pick ? await sync.replaceMatch(track.id, pick) : await worker.rejectTrack(track.id);
       worker.processQueue().catch(err => console.error('Error starting queue processor:', err));
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to reject track', details: err.message });
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
 

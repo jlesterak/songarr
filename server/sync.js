@@ -185,6 +185,52 @@ export async function manualMatch(id, key, track) {
   return playlist;
 }
 
+// Review of a track's match: other Deezer (or MusicBrainz) versions, best
+// first when a linked playlist says what the track should be. The current
+// match and earlier rejected ones are left out.
+export async function alternatives(trackId, query = '') {
+  const track = db.getTrack(trackId);
+  if (!track) throw Object.assign(new Error('Track not found'), { status: 404 });
+  const src = db.getPlaylists().flatMap(p => p.sourceTracks || []).find(s => s.trackId === trackId) || null;
+  // Without a source, search the bare title: "(Techno Remix)" would only find more remixes.
+  const bare = track.title.replace(/\s*[(\[][^)\]]*[)\]]/g, '').replace(/\s-\s.*$/, '').trim() || track.title;
+  const q = query.trim() || `${src?.artist || track.artists[0]} ${searchTitle(src?.title || bare)}`;
+  const skip = new Set([trackId, ...(track.rejectedIds || [])]);
+  const results = (await withFallback(q, await utils.searchDeezer(q))).filter(r => !skip.has(String(r.id)));
+  if (src) results.sort((a, b) => scoreMatch(b, src) - scoreMatch(a, src));
+  return {
+    query: q,
+    source: src && { artist: src.artist, title: src.title, durationMs: src.durationMs },
+    results: results.slice(0, 10).map(r => ({ ...r, status: db.getTrack(String(r.id))?.status || 'none' }))
+  };
+}
+
+// "Wrong match": swap a track for another result in every playlist. Linked
+// source tracks are marked manual, so syncs keep the pick. The old file goes
+// (worker.rejectTrack) and the old id is remembered so it isn't offered again.
+export async function replaceMatch(oldId, pick) {
+  const old = db.getTrack(oldId);
+  if (!old) throw Object.assign(new Error('Track not found'), { status: 404 });
+  if (!pick?.id || String(pick.id) === oldId) throw Object.assign(new Error('Pick a different track'), { status: 400 });
+  const affected = db.getPlaylists().filter(p => p.trackIds.includes(oldId) || (p.sourceTracks || []).some(s => s.trackId === oldId));
+  if (affected.some(p => running.has(p.id))) throw Object.assign(new Error('A sync is running; try again when it finishes'), { status: 409 });
+  const full = String(pick.id).startsWith('mb:') ? pick : (await utils.getDeezerTrackDetails(pick.id)) || pick;
+  await worker.rejectTrack(oldId);
+  const added = await db.addTrack(full);
+  await db.updateTrack(added.id, { rejectedIds: [...new Set([...(added.rejectedIds || []), ...(old.rejectedIds || []), oldId])] });
+  const swap = t => t === oldId ? added.id : t;
+  for (const pl of affected) {
+    const patch = { trackIds: [...new Set(pl.trackIds.map(swap))] };
+    if (pl.sourceTracks) patch.sourceTracks = pl.sourceTracks.map(s => s.trackId === oldId ? { ...s, trackId: added.id, manual: true } : s);
+    await db.updatePlaylist(pl.id, patch);
+  }
+  await db.deleteTrack(oldId);
+  for (const pl of db.getPlaylists().filter(p => affected.some(a => a.id === p.id))) await worker.regenerateM3UPlaylist(pl);
+  worker.processQueue().catch(err => console.error('[Sync] queue start failed:', err.message));
+  console.log(`[Sync] Replaced "${old.title}" (${oldId}) with "${added.title}" (${added.id}).`);
+  return db.getTrack(added.id);
+}
+
 // Re-reads the source and brings the playlist in line. A failed or empty fetch
 // changes nothing.
 export async function syncPlaylist(id, prefetched = null) {

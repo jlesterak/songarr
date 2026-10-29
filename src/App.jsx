@@ -110,6 +110,8 @@ export default function App() {
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
   // Manual match for an unmatched source track: { key, query, results, loading, error }
   const [matchFor, setMatchFor] = useState(null);
+  // Wrong-version review: { track, query, source, results, loading, busy, error }
+  const [review, setReview] = useState(null);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistDesc, setNewPlaylistDesc] = useState('');
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
@@ -329,17 +331,35 @@ export default function App() {
     }
   };
 
-  // Wrong version: delete the file, block its source, download another
-  const handleRejectTrack = async (track) => {
-    if (!confirm(`Delete "${track.title}" and download a different version?`)) return;
+  // Wrong version: search Deezer again for other versions of the track
+  const openReview = async (track, query = '') => {
+    setReview(r => ({ ...(r?.track.id === track.id ? r : { results: [] }), track, query, loading: true, error: null }));
     try {
-      const res = await fetch(`/api/v1/tracks/${track.id}/reject`, { method: 'POST' });
-      if (res.ok) {
-        fetchTracks();
-        fetchStats();
-      }
+      const res = await fetch(`/api/v1/tracks/${track.id}/alternatives?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setReview(r => r && r.track.id === track.id ? { ...r, ...data, loading: false } : r);
     } catch (e) {
-      console.error(e);
+      setReview(r => r && r.track.id === track.id ? { ...r, loading: false, error: e.message } : r);
+    }
+  };
+
+  // pick: swap to that version. null: keep the match, get a different file.
+  const handleRejectTrack = async (pick) => {
+    setReview(r => ({ ...r, busy: true, error: null }));
+    try {
+      const res = await fetch(`/api/v1/tracks/${review.track.id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pick ? { track: pick } : {})
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      setReview(null);
+      fetchTracks();
+      fetchStats();
+      fetchPlaylists();
+    } catch (e) {
+      setReview(r => r && { ...r, busy: false, error: e.message });
     }
   };
 
@@ -830,7 +850,7 @@ export default function App() {
                           </td>
                           <td>
                             {track.status === 'imported' && (
-                              <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: delete the file and download another" onClick={() => handleRejectTrack(track)}>
+                              <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: pick another or download a different file" onClick={() => openReview(track)}>
                                 🔁
                               </button>
                             )}
@@ -1015,7 +1035,7 @@ export default function App() {
                         <td>{new Date(track.createdAt).toLocaleString()}</td>
                         <td>
                           {track.status === 'imported' && (
-                            <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: delete the file and download another" onClick={() => handleRejectTrack(track)}>
+                            <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: pick another or download a different file" onClick={() => openReview(track)}>
                               🔁
                             </button>
                           )}
@@ -1277,6 +1297,11 @@ export default function App() {
                                 <span className={`badge badge-${track.status}`}>{track.status}</span>
                               </td>
                               <td>
+                                {['imported', 'wanted', 'failed'].includes(track.status) && (
+                                  <button className="btn btn-secondary" style={{padding: '0.4rem 0.8rem', marginRight: '0.4rem'}} title="Wrong version: pick another" onClick={() => openReview(track)}>
+                                    🔁
+                                  </button>
+                                )}
                                 <button 
                                   className="btn btn-danger" 
                                   style={{padding: '0.4rem 0.8rem'}}
@@ -1294,6 +1319,44 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {review && (
+          <div className="review-overlay" onClick={() => !review.busy && setReview(null)}>
+            <div className="panel review-dialog" onClick={e => e.stopPropagation()}>
+              <h3 style={{fontSize: '1.1rem', marginBottom: '0.5rem', fontFamily: 'var(--font-family-heading)'}}>Wrong version?</h3>
+              <div style={{fontSize: '0.85rem', marginBottom: '0.75rem'}}>
+                <div>Now: <strong>{review.track.artists.join(', ')} - {review.track.title}</strong> <span style={{color: 'var(--color-text-muted)'}}>({review.track.album}, {formatDuration(review.track.duration)}{review.track.source ? `, from ${review.track.source}` : ''})</span></div>
+                {review.source && <div>Playlist source: {review.source.artist} - {review.source.title}{review.source.durationMs ? ` (${formatDuration(Math.round(review.source.durationMs / 1000))})` : ''}</div>}
+                {review.track.status === 'imported' && <div style={{color: 'var(--color-text-muted)'}}>Either choice deletes the current file.</div>}
+              </div>
+              <form onSubmit={e => { e.preventDefault(); openReview(review.track, review.query); }} style={{display: 'flex', gap: '0.5rem', marginBottom: '0.5rem'}}>
+                <input className="input-text" value={review.query || ''} onChange={e => setReview({ ...review, query: e.target.value })} />
+                <button type="submit" className="btn btn-secondary" disabled={review.busy}>Search</button>
+              </form>
+              {review.loading && <span className="spinner"></span>}
+              {review.error && <div style={{color: 'var(--color-danger, #e55)'}}>{review.error}</div>}
+              {!review.loading && review.results.length === 0 && !review.error && <div>No other versions; try other words.</div>}
+              <div style={{maxHeight: '50vh', overflowY: 'auto', fontSize: '0.85rem'}}>
+                {review.results.map(r => (
+                  <div key={r.id} style={{display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.2rem 0'}}>
+                    <button className="btn btn-primary" style={{padding: '0.1rem 0.5rem', fontSize: '0.75rem', flexShrink: 0}} disabled={review.busy} onClick={() => handleRejectTrack(r)}>
+                      Use this
+                    </button>
+                    <span>{r.artist} - {r.title}<ExplicitBadge track={r} /> <span style={{color: 'var(--color-text-muted)'}}>({r.album}, {formatDuration(r.duration)}{r.status !== 'none' ? `; ${r.status}` : ''})</span></span>
+                  </div>
+                ))}
+              </div>
+              <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem', flexWrap: 'wrap'}}>
+                {review.track.status === 'imported' && (
+                  <button className="btn btn-secondary" disabled={review.busy} title="Right song, wrong file: block where it came from and download again" onClick={() => handleRejectTrack(null)}>
+                    Same match, different file
+                  </button>
+                )}
+                <button className="btn btn-secondary" disabled={review.busy} onClick={() => setReview(null)}>Cancel</button>
+              </div>
+            </div>
           </div>
         )}
 
