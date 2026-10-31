@@ -9,6 +9,7 @@
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
 
 ## [COMPLETED]
+- [COMPLETED] 2026-10-31: v0.2.10 released (Jake OK): the 10-28 "wrong version" review/swap; tests 74/74.
 - [COMPLETED] 2026-10-28: "Wrong version" review (🔁 on tracks in the dashboard, queue and playlists). It searches Deezer again, skipping the current and earlier rejected matches and ranking by the playlist source when there is one. "Use this" swaps the track everywhere: linked playlists keep the pick on sync, and the old id isn't offered again. "Same match, different file" deletes the file, blocks its source (that YouTube video, that torrent, or deemix) and re-queues. YouTube imports from before this didn't record their video URL, so they can come back the same. Not released yet; the dialog hasn't been checked in a browser.
 - [COMPLETED] 2026-10-26: v0.2.9 (playlist cover mosaics) live on icebox, healthy, cover CSS served. The v0.2.9 publish hung twice in "Build and push" (likely arm64 under QEMU); publish job now times out after 20 min.
 - [COMPLETED] 2026-10-25: Navidrome M3U sync confirmed: all 30 Songarr `.m3u8` files show in Navidrome as synced playlists (counts match; log "Finished refreshing playlists" refreshed=31).

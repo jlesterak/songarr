@@ -1,7 +1,7 @@
 {
   "name": "songarr",
   "license": "Unlicense",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Track-first music request and automation platform",
   "type": "module",
   "main": "server/index.js",
