@@ -3,12 +3,12 @@
 ## [IN PROGRESS]
 
 ## [PENDING]
-- YouTube 403 "unable to download video data" on yt-dlp 2026.08.19 (latest): 2 of ~1,260 tracks (both MusicBrainz matches, so no deemix). Re-requested 2026-10-12. If it keeps happening, look at yt-dlp's PO token / cookies guidance.
+- 80 library tracks are MP3 with a FLAC target (imported before the upgrade path, or never re-requested). Re-requesting one upgrades it (checked 2026-10-31); a bulk "upgrade lossy" action would sweep them. The torrent upgrade path (deemix unset) is still proven against mocks only.
 - Spotify playlists cap at 100 tracks: the embed page only lists the first 100 (seen 2026-10-12, every big import stopped at exactly 100). Getting past it needs the Spotify Web API, which no longer serves Spotify's own (37i9dQZF…) playlists to client-credentials apps. Decision (owner, 2026-10-18): no Spotify developer app, so the 100-track cap stays; the playlist page now says so when a linked playlist has 100 source tracks.
-- Confirm live on icebox: re-request Khruangbin "Time (You and I)" is marked imported from the library, and an MP3 in the library upgrades to FLAC via deemix (and via torrent with deemix unset).
 - SABnzbd still gets the indexer URL (`mode=addurl`); switch to `mode=addfile` if SAB ever runs where it can't reach Prowlarr. SABnzbd/Transmission/Deluge are proven against the mocks only.
 
 ## [COMPLETED]
+- 2026-10-31: confirmed on the live instance: Khruangbin "Time (You and I)" imported from the library (FLAC); an MP3 (Survivor, "Eye of the Tiger") re-requested -> deemix FLAC, MP3 removed after import. The two YouTube 403 tracks resolved (no 403s left; 2,120 of 2,121 imported). The one failure is a MusicBrainz-only track with no YouTube candidates.
 - [COMPLETED] 2026-10-31: v0.2.10 released (Jake OK) and live on icebox: the 10-28 "wrong version" review/swap; tests 74/74.
 - [COMPLETED] 2026-10-28: "Wrong version" review (🔁 on tracks in the dashboard, queue and playlists). It searches Deezer again, skipping the current and earlier rejected matches and ranking by the playlist source when there is one. "Use this" swaps the track everywhere: linked playlists keep the pick on sync, and the old id isn't offered again. "Same match, different file" deletes the file, blocks its source (that YouTube video, that torrent, or deemix) and re-queues. YouTube imports from before this didn't record their video URL, so they can come back the same. Not released yet; the dialog hasn't been checked in a browser.
 - [COMPLETED] 2026-10-26: v0.2.9 (playlist cover mosaics) live on icebox, healthy, cover CSS served. The v0.2.9 publish hung twice in "Build and push" (likely arm64 under QEMU); publish job now times out after 20 min.
