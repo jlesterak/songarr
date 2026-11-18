@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 import * as db from './db.js';
-import { albumFolder, sanitizeFilename } from './worker.js';
+import { albumFolder, sanitizeFilename, refreshPlaylistsFor } from './worker.js';
 import { copyOrMove } from './deemix.js';
 
 // Drop-folder importer: tagged audio that arrives outside Songarr's own
@@ -11,6 +11,7 @@ import { copyOrMove } from './deemix.js';
 // duplicates and name clashes stay where they are and are listed for the UI.
 
 const AUDIO_EXT = new Set(['.mp3', '.flac', '.m4a', '.ogg', '.opus']);
+const LOSSY_EXT = ['.mp3', '.m4a', '.ogg', '.opus'];
 const TEMP_RE = /\.(part|tmp|temp|download|crdownload|partial)(\.|$)|^\./i;
 
 // Last scan's "needs attention" list, and what each file looked like the
@@ -134,6 +135,15 @@ async function importDir(dir, files, root, settings, report) {
         : { path: file, reason: 'exists', detail: `${dest} exists with a different size` });
       continue;
     }
+    // A FLAC for a track the library holds lossy replaces that file (and
+    // takes over its tracks) instead of landing beside it.
+    let lossy = null;
+    if (ext === '.flac') {
+      for (const e of LOSSY_EXT) {
+        const p = dest.slice(0, -ext.length) + e;
+        if (await exists(p)) { lossy = p; break; }
+      }
+    }
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await copyOrMove(file, dest);
     // Lyrics follow under the new basename
@@ -141,6 +151,18 @@ async function importDir(dir, files, root, settings, report) {
     const destLrc = path.join(path.dirname(dest), `${path.basename(dest, ext)}.lrc`);
     if (await exists(lrc) && !(await exists(destLrc))) await copyOrMove(lrc, destLrc);
     target.add(path.dirname(dest));
+    imported++;
+    const upgrade = { status: 'imported', filePath: dest, format: 'flac', bitrate: 'lossless', error: null };
+    if (lossy) {
+      await fs.unlink(lossy).catch(err => console.warn(`[Inbox] Couldn't remove ${lossy}: ${err.message}`));
+      const owners = db.getTracks().filter(t => t.filePath === lossy);
+      for (const t of owners) {
+        await db.updateTrack(t.id, upgrade);
+        await refreshPlaylistsFor(t.id);
+      }
+      console.log(`[Inbox] Upgraded ${lossy} -> ${dest}`);
+      if (owners.length) continue;
+    }
     const artist = tags.artist || tags.albumartist;
     const track = {
       id: `inbox:${crypto.createHash('sha1').update(dest).digest('hex').slice(0, 16)}`,
@@ -158,7 +180,6 @@ async function importDir(dir, files, root, settings, report) {
       status: 'imported', source: 'inbox', filePath: dest, format: ext.slice(1),
       bitrate: ext === '.flac' ? 'lossless' : '', error: null
     });
-    imported++;
     console.log(`[Inbox] Imported ${file} -> ${dest}`);
   }
   // Cover: copy into each album folder that has none

@@ -73,6 +73,11 @@ export async function getDeezerTrackDetails(trackId) {
     const response = await fetch(`https://api.deezer.com/track/${trackId}`);
     if (!response.ok) return null;
     const track = await response.json();
+    // Deezer answers 200 with { error } on a rate limit or an unknown id
+    if (track?.error || !track?.artist || !track?.album) {
+      console.warn(`Deezer track ${trackId}: ${track?.error?.message || 'incomplete response'}`);
+      return null;
+    }
     return {
       id: String(track.id),
       title: track.title,
@@ -131,6 +136,25 @@ export async function parseSpotifyPlaylist(playlistUrlOrId) {
   return (await fetchSpotifyPlaylist(playlistUrlOrId)).tracks;
 }
 
+// The embed page. Under a burst of requests Spotify sometimes serves it with
+// no tracks (seen linking 33 playlists at once), so that gets one retry.
+async function fetchSpotifyEmbed(embedUrl, { retryMs = 3000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(embedUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!response.ok) throw new Error(`Spotify embed fetch failed: ${response.status}`);
+    const html = await response.text();
+    if (/"trackList":\[\{/.test(html) || attempt >= 1) {
+      if (attempt) console.warn(`Spotify embed ${embedUrl}: retried, ${html.length} bytes`);
+      return html;
+    }
+    await new Promise(r => setTimeout(r, retryMs));
+  }
+}
+
 // { id, name, tracks } for a public Spotify playlist (name may be '').
 export async function fetchSpotifyPlaylist(playlistUrlOrId) {
   try {
@@ -138,15 +162,8 @@ export async function fetchSpotifyPlaylist(playlistUrlOrId) {
     if (!playlistId) throw new Error('Invalid Spotify playlist URL format');
     
     const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
-    const response = await fetch(embedUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
-    
-    if (!response.ok) throw new Error(`Spotify embed fetch failed: ${response.status}`);
-    const html = await response.text();
-    
+    const html = await fetchSpotifyEmbed(embedUrl);
+
     // Extract JSON payload from Next.js state
     const jsonMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
     if (!jsonMatch) {

@@ -348,7 +348,7 @@ export async function rejectTrack(id) {
   return updated;
 }
 
-async function refreshPlaylistsFor(trackId) {
+export async function refreshPlaylistsFor(trackId) {
   for (const pl of db.getPlaylists()) {
     if (pl.trackIds.includes(trackId)) await regenerateM3UPlaylist(pl);
   }

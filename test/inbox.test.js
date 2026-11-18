@@ -102,6 +102,23 @@ test('duplicate and clashing files are never overwritten', async () => {
   assert.equal(fs.readFileSync(dest).length, flac(tags).length);
 });
 
+test('a FLAC replaces the lossy library copy and takes over its track', async () => {
+  const tags = { ARTIST: 'U', ALBUM: 'Up', TITLE: 'Grade', TRACKNUMBER: '1' };
+  const mp3 = path.join(lib, 'U', 'Up', '01 - Grade.mp3');
+  fs.mkdirSync(path.dirname(mp3), { recursive: true });
+  fs.writeFileSync(mp3, 'lossy');
+  await db.addTrack({ id: 'dz:1', title: 'Grade', artists: ['U'], album: 'Up' });
+  await db.updateTrack('dz:1', { status: 'imported', filePath: mp3, format: 'mp3' });
+  put('up.flac', flac(tags));
+  assert.equal(await scan2(settings()), 1);
+  const dest = mp3.replace(/\.mp3$/, '.flac');
+  assert.ok(fs.existsSync(dest));
+  assert.ok(!fs.existsSync(mp3));
+  assert.equal(db.getTrack('dz:1').filePath, dest);
+  assert.equal(db.getTrack('dz:1').format, 'flac');
+  assert.equal(db.getTracks().filter(t => t.filePath === dest).length, 1); // no inbox: duplicate
+});
+
 test('an inbox inside the torrent path is refused', async () => {
   const s = settings();
   assert.match(inbox.inboxProblem(path.join(torrentDir, 'complete'), s), /torrent download path/);
